@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">GrainOS</string>
+
+    <!-- Navigation Tabs -->
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_pnl">P&amp;L Engine</string>
+    <string name="nav_finance">Finance Tracker</string>
+    <string name="nav_expenses">Expenses</string>
+    <string name="nav_inbound">Gate Entry</string>
+    <string name="nav_dispatch">Dispatch</string>
+    <string name="nav_godowns">Godowns</string>
+    <string name="nav_receipts">Receipts</string>
+    <string name="nav_ledger">Ledger</string>
+    <string name="nav_ai_advisor">AI Advisor</string>
+
+    <!-- Language Selector -->
+    <string name="lang_toggle">Language</string>
+
+    <!-- Dashboard Strings -->
+    <string name="dash_analytics_title">Analytics Dashboard</string>
+    <string name="dash_analytics_subtitle">Live warehouse telemetry &amp; logistics</string>
+    <string name="dash_kpi_inbound">Total Inbound</string>
+    <string name="dash_kpi_volume">Volume (MT)</string>
+    <string name="dash_kpi_farmers">Farmers</string>
+    <string name="dash_kpi_pending_pay">Pending Payouts</string>
+    <string name="dash_btn_ai_advisor">✨ AI Advisor</string>
+    <string name="dash_btn_new_entry">New Gate Entry</string>
+</resources>

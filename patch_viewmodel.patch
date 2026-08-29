@@ -1,0 +1,39 @@
+--- app/src/main/java/com/example/ui/viewmodel/GrainWmsViewModel.kt
++++ app/src/main/java/com/example/ui/viewmodel/GrainWmsViewModel.kt
+@@ -158,21 +158,29 @@
+         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+ 
+     // --- REAL-TIME LIVE INVENTORY SYNC (TRANSACTION LEDGER) ---
+-    val liveGodownStockLedger: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.combine(allProcurements, allDispatches) { procs, disps ->
++    val liveGodownStockLedger: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.combine(allProcurements, allDispatches, allGodowns) { procs, disps, godowns ->
+         val stockMap = mutableMapOf<String, Double>()
+         
++        fun getGodownId(ref: String): String {
++            val exact = godowns.find { it.godownId == ref || it.displayName == ref }
++            if (exact != null) return exact.godownId
++            val fuzzy = godowns.find { it.displayName.contains(ref, ignoreCase = true) || ref.contains(it.displayName, ignoreCase = true) }
++            if (fuzzy != null) return fuzzy.godownId
++            return ref
++        }
++
+         // Sum Inward Unloaded Weight
+         procs.filter { it.status == ProcurementStatus.UNLOADED.name || it.status == ProcurementStatus.COMPLETED.name }
+             .forEach { p ->
+-                val current = stockMap.getOrDefault(p.godownAssigned, 0.0)
+-                stockMap[p.godownAssigned] = current + (p.netWeightKg / 1000.0) // Convert kg to MT
++                val gId = getGodownId(p.godownAssigned)
++                val current = stockMap.getOrDefault(gId, 0.0)
++                stockMap[gId] = current + (p.netWeightKg / 1000.0) // Convert kg to MT
+             }
+             
+         // Subtract Outward Dispatched Loaded Weight
+         disps.filter { it.status != com.example.data.model.DispatchStatus.REJECTED.name }
+             .forEach { d ->
+-                val current = stockMap.getOrDefault(d.godownSource, 0.0)
+-                stockMap[d.godownSource] = current - (d.netLoadedWeightKg / 1000.0)
++                val gId = getGodownId(d.godownSource)
++                val current = stockMap.getOrDefault(gId, 0.0)
++                stockMap[gId] = current - (d.netLoadedWeightKg / 1000.0)
+             }
+             
+         stockMap

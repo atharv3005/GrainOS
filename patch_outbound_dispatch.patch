@@ -1,0 +1,59 @@
+--- app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
++++ app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+@@ -69,6 +69,7 @@
+     activeCrop: CropType,
+     godowns: List<GodownEntity>,
+     dispatches: List<OutboundDispatchEntity>,
++    liveGodownStockLedger: Map<String, Double>,
+     isSubmitting: Boolean = false,
+     onCreateDispatch: (String, String, String, CropType, String, Double, Double, Double, () -> Unit) -> Unit,
+     onOpenRecordRejectionForTruck: (truckNo: String, buyer: String, weightKg: Double) -> Unit = { _, _, _ -> },
+@@ -83,6 +84,7 @@
+     var tareWeightKg by remember { mutableStateOf("11400") }
+     var grossWeightKg by remember { mutableStateOf("31400") }
+     var ratePerQuintal by remember { mutableStateOf("2650") }
++    var errorMessage by remember { mutableStateOf<String?>(null) }
+ 
+     val tare = tareWeightKg.toDoubleOrNull() ?: 11400.0
+     val gross = grossWeightKg.toDoubleOrNull() ?: 31400.0
+@@ -194,6 +196,7 @@
+                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                     godowns.forEach { g ->
+                         val isSel = g.godownId == selectedGodown
++                        val currentStockMt = liveGodownStockLedger[g.godownId] ?: 0.0
+                         Box(
+                             modifier = Modifier
+                                 .weight(1f)
+@@ -206,7 +209,7 @@
+                         ) {
+                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                 Text(g.displayName.take(8), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isSel) Color(0xFF38BDF8) else Color.White)
+-                                Text("${g.currentStockMt.toInt()} MT", fontSize = 9.sp, color = Color(0xFF94A3B8))
++                                Text("${currentStockMt.toInt()} MT", fontSize = 9.sp, color = Color(0xFF94A3B8))
+                             }
+                         }
+                     }
+@@ -254,8 +257,21 @@
+                     }
+                 }
+ 
++                if (errorMessage != null) {
++                    Text(
++                        text = errorMessage ?: "",
++                        color = Color(0xFFEF4444),
++                        fontSize = 13.sp,
++                        fontWeight = FontWeight.Bold
++                    )
++                }
++
+                 Button(
+                     onClick = {
++                        val currentStockMt = liveGodownStockLedger[selectedGodown] ?: 0.0
++                        if (netMt > currentStockMt) {
++                            errorMessage = "Error: Cannot dispatch ${netMt.toInt()} MT. Only ${currentStockMt.toInt()} MT available in this storage facility."
++                            return@Button
++                        }
++                        errorMessage = null
+                         onCreateDispatch(buyerName, destination, vehicleNumber, activeCrop, selectedGodown, tare, gross, rate) {
+                             buyerName = ""
+                             destination = ""

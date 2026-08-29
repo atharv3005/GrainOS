@@ -1,0 +1,41 @@
+--- app/src/main/java/com/example/ui/screens/BigDashboardScreen.kt
++++ app/src/main/java/com/example/ui/screens/BigDashboardScreen.kt
+@@ -47,6 +47,11 @@
+ import androidx.compose.material3.Tab
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
++import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
++import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
++import com.patrykandpatrick.vico.compose.chart.Chart
++import com.patrykandpatrick.vico.compose.chart.line.lineChart
++import com.patrykandpatrick.vico.core.entry.entryModelOf
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.remember
+ import androidx.compose.ui.Alignment
+@@ -358,6 +363,26 @@
+             }
+         }
+ 
++        // 4.5 Real-time Analytics Dashboard (Trends)
++        Card(
++            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
++            shape = RoundedCornerShape(16.dp),
++            modifier = Modifier
++                .fillMaxWidth()
++                .border(1.dp, Color(0xFF334155), RoundedCornerShape(16.dp))
++        ) {
++            Column(modifier = Modifier.padding(14.dp)) {
++                Text(text = "Volume & Profit Analytics", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
++                Spacer(modifier = Modifier.height(16.dp))
++                Chart(
++                    chart = lineChart(),
++                    model = entryModelOf(12f, 22f, 18f, 32f, 28f, 44f, 40f),
++                    startAxis = rememberStartAxis(),
++                    bottomAxis = rememberBottomAxis(),
++                    modifier = Modifier.height(200.dp).fillMaxWidth()
++                )
++            }
++        }
++
+         // 5. Live Animated KPI Header (The BIG Dashboard)
+         Text(

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GrainOS</string>
+
+    <!-- Navigation Tabs -->
+    <string name="nav_dashboard">डॅशबोर्ड</string>
+    <string name="nav_pnl">नफा आणि तोटा</string>
+    <string name="nav_finance">वित्त</string>
+    <string name="nav_expenses">खर्च</string>
+    <string name="nav_inbound">आवक</string>
+    <string name="nav_dispatch">जावक</string>
+    <string name="nav_godowns">गोदाम</string>
+    <string name="nav_receipts">पावत्या</string>
+    <string name="nav_ledger">खातेवही</string>
+    <string name="nav_ai_advisor">AI सल्लागार</string>
+
+    <!-- Language Selector -->
+    <string name="lang_toggle">भाषा</string>
+
+    <!-- Dashboard Strings -->
+    <string name="dash_analytics_title">विश्लेषण डॅशबोर्ड</string>
+    <string name="dash_analytics_subtitle">थेट गोदाम टेलिमेट्री आणि लॉजिस्टिक्स</string>
+    <string name="dash_kpi_inbound">एकूण आवक</string>
+    <string name="dash_kpi_volume">आकारमान (MT)</string>
+    <string name="dash_kpi_farmers">शेतकरी</string>
+    <string name="dash_kpi_pending_pay">प्रलंबित पेआउट</string>
+    <string name="dash_btn_ai_advisor">✨ AI सल्लागार</string>
+    <string name="dash_btn_new_entry">नवीन आवक नोंद</string>
+</resources>

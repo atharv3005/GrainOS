@@ -1,0 +1,84 @@
+--- app/src/main/java/com/example/ui/screens/FarmerReceiptsScreen.kt
++++ app/src/main/java/com/example/ui/screens/FarmerReceiptsScreen.kt
+@@ -23,6 +23,7 @@
+ import androidx.compose.material.icons.filled.HourglassEmpty
+ import androidx.compose.material.icons.filled.PictureAsPdf
+ import androidx.compose.material.icons.filled.Search
++import androidx.compose.material.icons.filled.Download
+ import androidx.compose.material.icons.filled.Send
+ import androidx.compose.material3.Card
+ import androidx.compose.material3.CardDefaults
+@@ -46,6 +47,7 @@
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
++import androidx.compose.ui.platform.LocalContext
+ import com.example.data.model.CropType
+ import com.example.data.model.PaymentStatus
+ import com.example.data.model.ProcurementEntity
++import com.example.data.export.CsvExporter
+ import java.text.NumberFormat
+ import java.text.SimpleDateFormat
+ import java.util.Date
+@@ -82,23 +85,41 @@
+     val inrFormat = remember { NumberFormat.getCurrencyInstance(Locale("en", "IN")) }
+     val dateFormat = remember { SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()) }
++    val context = LocalContext.current
+ 
+     Column(
+         modifier = modifier
+             .fillMaxSize()
+             .padding(16.dp),
+         verticalArrangement = Arrangement.spacedBy(14.dp)
+     ) {
+         // Search & Filter Header
+-        OutlinedTextField(
+-            value = searchQuery,
+-            onValueChange = { searchQuery = it },
+-            placeholder = { Text("Search by farmer name, vehicle, or token...") },
+-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = activeCrop.primaryColor) },
+-            modifier = Modifier.fillMaxWidth().testTag("receipt_search_input"),
+-            colors = OutlinedTextFieldDefaults.colors(
+-                focusedBorderColor = activeCrop.primaryColor,
+-                unfocusedBorderColor = Color(0xFF334155),
+-                focusedTextColor = Color.White,
+-                unfocusedTextColor = Color.White
+-            ),
+-            singleLine = true,
+-            shape = RoundedCornerShape(12.dp)
+-        )
++        Row(
++            modifier = Modifier.fillMaxWidth(),
++            verticalAlignment = Alignment.CenterVertically,
++            horizontalArrangement = Arrangement.spacedBy(10.dp)
++        ) {
++            OutlinedTextField(
++                value = searchQuery,
++                onValueChange = { searchQuery = it },
++                placeholder = { Text("Search...") },
++                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = activeCrop.primaryColor) },
++                modifier = Modifier.weight(1f).testTag("receipt_search_input"),
++                colors = OutlinedTextFieldDefaults.colors(
++                    focusedBorderColor = activeCrop.primaryColor,
++                    unfocusedBorderColor = Color(0xFF334155),
++                    focusedTextColor = Color.White,
++                    unfocusedTextColor = Color.White
++                ),
++                singleLine = true,
++                shape = RoundedCornerShape(12.dp)
++            )
++            
++            Box(
++                modifier = Modifier
++                    .size(56.dp)
++                    .clip(RoundedCornerShape(12.dp))
++                    .background(Color(0xFF1E293B))
++                    .border(1.dp, activeCrop.primaryColor, RoundedCornerShape(12.dp))
++                    .clickable { CsvExporter.exportProcurements(context, filteredList) },
++                contentAlignment = Alignment.Center
++            ) {
++                Icon(Icons.Default.Download, contentDescription = "Export CSV", tint = activeCrop.primaryColor)
++            }
++        }
+ 
+         // Filter Pills Row

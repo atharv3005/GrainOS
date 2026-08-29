@@ -1,0 +1,14 @@
+--- app/src/main/java/com/example/MainActivity.kt
++++ app/src/main/java/com/example/MainActivity.kt
+@@ -696,7 +696,7 @@
+     ) {
+         val visibleTabs = listOf(
+             NavigationTab.DASHBOARD,
+-            NavigationTab.PNL,
++            NavigationTab.FINANCE,
+             NavigationTab.EXPENSES,
+             NavigationTab.INBOUND,
+             NavigationTab.DISPATCH,
+             NavigationTab.GODOWNS,
+             NavigationTab.RECEIPTS
+         )

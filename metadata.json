@@ -1,0 +1,6 @@
+{
+  "name": "GrainOS",
+  "description": "Enterprise Agri-Commodity & Warehouse Operating System with real-time weighbridge IoT, dynamic crop theming, trade booking engine, per-quintal expense ledger, and real-time Profit & Loss analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

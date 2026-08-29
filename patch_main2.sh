@@ -1,0 +1,1 @@
+sed -i 's/onSaveProfile = { newProfile ->/onSaveFacilities = { facs -> viewModel.addStorageFacilities(facs) },\n                onSaveProfile = { newProfile ->/g' app/src/main/java/com/example/MainActivity.kt

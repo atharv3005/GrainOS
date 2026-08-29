@@ -1,0 +1,2 @@
+sed -i 's/fun ExpenseManagementScreen(/fun ExpenseManagementScreen(\n    isUnlocked: Boolean = false,\n    onUnlockSuccess: () -> Unit = {},/g' app/src/main/java/com/example/ui/screens/ExpenseManagementScreen.kt
+sed -i '/val inrFormat = NumberFormat.getCurrencyInstance(Locale("en", "IN"))/i \    if (!isUnlocked) {\n        com.example.ui.components.PinLockScreen(\n            activeCrop = activeCrop,\n            onUnlockSuccess = onUnlockSuccess\n        )\n        return\n    }\n' app/src/main/java/com/example/ui/screens/ExpenseManagementScreen.kt

@@ -1,0 +1,1 @@
+sed -i 's/onSaveProfile(updated)/onSaveProfile(updated)\n                                val facPairs = facilities.map { Pair(it.name.ifBlank { "Storage" }, it.capacityStr.toDoubleOrNull() ?: 500.0) }\n                                onSaveFacilities(facPairs)/g' app/src/main/java/com/example/ui/components/FirmLoginDialog.kt

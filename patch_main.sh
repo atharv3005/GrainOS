@@ -1,0 +1,3 @@
+sed -i '/var appLanguage by remember/i \    var isFinanceUnlocked by remember { mutableStateOf(false) }\n' app/src/main/java/com/example/MainActivity.kt
+sed -i 's/FinanceDashboardScreen(/FinanceDashboardScreen(\n                            isUnlocked = isFinanceUnlocked,\n                            onUnlockSuccess = { isFinanceUnlocked = true },/g' app/src/main/java/com/example/MainActivity.kt
+sed -i 's/ExpenseManagementScreen(/ExpenseManagementScreen(\n                            isUnlocked = isFinanceUnlocked,\n                            onUnlockSuccess = { isFinanceUnlocked = true },/g' app/src/main/java/com/example/MainActivity.kt

@@ -1,0 +1,50 @@
+--- app/src/main/java/com/example/ui/components/PdfReceiptDialog.kt
++++ app/src/main/java/com/example/ui/components/PdfReceiptDialog.kt
+@@ -343,13 +343,7 @@
+ 
+                         Button(
+                             onClick = {
+-                                val shareText = "${firmProfile.firmName} - Procurement Slip ${procurement.tokenNo} for ${procurement.farmerName}: Net Grain ${procurement.netWeightKg.toInt()} kg, Payout: ${inrFormat.format(procurement.totalAmount)}"
+-                                val sendIntent = Intent().apply {
+-                                    action = Intent.ACTION_SEND
+-                                    putExtra(Intent.EXTRA_TEXT, shareText)
+-                                    type = "text/plain"
+-                                }
+-                                context.startActivity(Intent.createChooser(sendIntent, "Share PDF Slip"))
++                                generateAndSharePdf(context, procurement, firmProfile, inrFormat, share = true)
+                             },
+                             modifier = Modifier.weight(1f),
+                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981), contentColor = Color.White)
+@@ -387,7 +381,7 @@
+     }
+ }
+ 
+-private fun generateAndSharePdf(context: Context, procurement: ProcurementEntity, firmProfile: FirmProfile, inrFormat: java.text.NumberFormat) {
++private fun generateAndSharePdf(context: Context, procurement: ProcurementEntity, firmProfile: FirmProfile, inrFormat: java.text.NumberFormat, share: Boolean = false) {
+     val pdfDocument = android.graphics.pdf.PdfDocument()
+     val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create()
+     val page = pdfDocument.startPage(pageInfo)
+@@ -422,10 +416,19 @@
+         pdfDocument.close()
+ 
+         val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+-        val intent = Intent(Intent.ACTION_VIEW)
+-        intent.setDataAndType(uri, "application/pdf")
+-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+-        context.startActivity(intent)
++        
++        if (share) {
++            val intent = Intent(Intent.ACTION_SEND)
++            intent.setType("application/pdf")
++            intent.putExtra(Intent.EXTRA_STREAM, uri)
++            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            context.startActivity(Intent.createChooser(intent, "Share PDF Slip"))
++        } else {
++            val intent = Intent(Intent.ACTION_VIEW)
++            intent.setDataAndType(uri, "application/pdf")
++            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            context.startActivity(intent)
++        }
+     } catch (e: Exception) {
+         e.printStackTrace()
+         Toast.makeText(context, "Error generating PDF", Toast.LENGTH_SHORT).show()

@@ -1,0 +1,6 @@
+sed -i 's/val tare = tareWeightKg.toDoubleOrNull() ?: 11400.0/val tare by remember { androidx.compose.runtime.derivedStateOf { tareWeightKg.toDoubleOrNull() ?: 0.0 } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+sed -i 's/val gross = grossWeightKg.toDoubleOrNull() ?: 31400.0/val gross by remember { androidx.compose.runtime.derivedStateOf { grossWeightKg.toDoubleOrNull() ?: 0.0 } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+sed -i 's/val netKg = (gross - tare).coerceAtLeast(0.0)/val netKg by remember { androidx.compose.runtime.derivedStateOf { (gross - tare).coerceAtLeast(0.0) } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+sed -i 's/val netMt = netKg \/ 1000.0/val netMt by remember { androidx.compose.runtime.derivedStateOf { netKg \/ 1000.0 } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+sed -i 's/val rate = ratePerQuintal.toDoubleOrNull() ?: 2650.0/val rate by remember { androidx.compose.runtime.derivedStateOf { ratePerQuintal.toDoubleOrNull() ?: 0.0 } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt
+sed -i 's/val totalInvoice = (netKg \/ 100.0) \* rate/val totalInvoice by remember { androidx.compose.runtime.derivedStateOf { (netKg \/ 100.0) \* rate } }/g' app/src/main/java/com/example/ui/screens/OutboundDispatchScreen.kt

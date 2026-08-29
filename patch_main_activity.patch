@@ -1,0 +1,42 @@
+--- app/src/main/java/com/example/MainActivity.kt
++++ app/src/main/java/com/example/MainActivity.kt
+@@ -32,6 +32,7 @@
+ import androidx.compose.material.icons.filled.Scale
+ import androidx.compose.material.icons.filled.Shield
+ import androidx.compose.material.icons.filled.TrendingUp
++import androidx.compose.material.icons.filled.AccountBalanceWallet
+ import androidx.compose.material.icons.filled.Warehouse
+ import androidx.compose.material3.Icon
+ import androidx.compose.material3.IconButton
+@@ -77,6 +78,7 @@
+ import com.example.ui.screens.ExpenseManagementScreen
+ import com.example.ui.screens.FarmerReceiptsScreen
+ import com.example.ui.screens.FinancialPnLScreen
++import com.example.ui.screens.FinanceTrackerScreen
+ import com.example.ui.screens.GateEntryScreen
+ import com.example.ui.screens.GodownStockScreen
+ import com.example.ui.screens.InboundProcurementScreen
+@@ -87,6 +89,7 @@
+ enum class NavigationTab(val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+     DASHBOARD("Dashboard", Icons.Default.Dashboard),
+     PNL("P&L Engine", Icons.Default.TrendingUp),
++    FINANCE("Finance", Icons.Default.AccountBalanceWallet),
+     EXPENSES("Expenses", Icons.Default.Receipt),
+     INBOUND("Gate Entry", Icons.Default.Scale),
+     DISPATCH("Dispatch", Icons.Default.LocalShipping),
+@@ -266,6 +269,15 @@
+                             onDeleteRejection = { id -> viewModel.deleteTruckRejection(id) }
+                         )
+                     }
++                    NavigationTab.FINANCE -> {
++                        FinanceTrackerScreen(
++                            activeCrop = activeCrop,
++                            procurements = allProcurements,
++                            dispatches = allDispatches,
++                            onPayFarmer = { viewModel.updatePaymentStatus(it, com.example.data.model.PaymentStatus.PAID) },
++                            onSettleDispatch = { viewModel.openSettleDispatchDialog(it) }
++                        )
++                    }
+                     NavigationTab.EXPENSES -> {
+                         ExpenseManagementScreen(
+                             activeCrop = activeCrop,

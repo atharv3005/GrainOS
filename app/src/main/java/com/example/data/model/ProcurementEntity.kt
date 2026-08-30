@@ -86,5 +86,6 @@ data class ProcurementEntity(
     val completedTimestamp: Long = 0L,
     val whatsappEntrySent: Boolean = false,
     val whatsappReceiptSent: Boolean = false,
+    val isArchived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )

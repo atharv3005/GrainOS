@@ -17,6 +17,7 @@ import com.example.data.model.PaymentMode
 import com.example.data.model.PaymentStatus
 import com.example.data.model.ProcurementEntity
 import com.example.data.model.ProcurementStatus
+import com.example.data.model.StorageFacilityIntakeEntity
 import com.example.data.model.TradeBookingEntity
 import com.example.data.model.TruckRejectionEntity
 import com.example.data.model.VendorLedgerEntity
@@ -140,6 +141,9 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allGodowns: StateFlow<List<GodownEntity>> = repository.allGodowns
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allStorageIntakes: StateFlow<List<StorageFacilityIntakeEntity>> = repository.allStorageIntakes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allDispatches: StateFlow<List<OutboundDispatchEntity>> = repository.allDispatches
@@ -267,10 +271,29 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // --- Advanced Gate Entry ---
-    fun submitAdvancedGateEntry(procurement: ProcurementEntity) {
+    fun submitAdvancedGateEntry(
+        procurement: ProcurementEntity,
+        targetGodownIdOrName: String? = null,
+        onComplete: ((ProcurementEntity) -> Unit)? = null
+    ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            transactionManager.recordProcurement(procurement)
+            val assignedGodown = targetGodownIdOrName?.ifBlank { null } ?: procurement.godownAssigned
+            val updatedProc = procurement.copy(godownAssigned = assignedGodown)
+            repository.insertProcurement(updatedProc)
+            repository.recordStorageIntake(
+                storageFacilityNameOrId = assignedGodown,
+                procurement = updatedProc,
+                customMoisture = updatedProc.moisturePercentage
+            )
+            _snackbarMessage.value = "Gate Entry Saved & Stored in $assignedGodown!"
+            onComplete?.invoke(updatedProc)
+        }
+    }
+
+    fun deleteStorageIntake(id: Long) {
+        viewModelScope.launch {
+            repository.deleteStorageIntake(id)
+            _snackbarMessage.value = "Storage facility intake record deleted."
         }
     }
 
@@ -949,7 +972,20 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteProcurement(id: Long) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.deleteProcurement(id) }
+            repository.deleteProcurement(id)
+            _snackbarMessage.value = "Procurement record deleted successfully"
+        }
+    }
+
+    fun setProcurementArchived(id: Long, isArchived: Boolean) {
+        viewModelScope.launch {
+            repository.setProcurementArchived(id, isArchived)
+            _snackbarMessage.value = if (isArchived) "Procurement record archived" else "Procurement record unarchived"
+        }
+    }
+
+    fun toggleArchive(procurement: ProcurementEntity) {
+        setProcurementArchived(procurement.id, !procurement.isArchived)
     }
 
     fun updateProcurement(procurement: ProcurementEntity) {

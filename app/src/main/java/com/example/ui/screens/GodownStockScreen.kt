@@ -3,50 +3,26 @@ package com.example.ui.screens
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Air
-import androidx.compose.material.icons.filled.DeviceThermostat
-import androidx.compose.material.icons.filled.Opacity
-import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Warehouse
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.CropType
 import com.example.data.model.GodownEntity
+import com.example.data.model.StorageFacilityIntakeEntity
 
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
@@ -54,6 +30,9 @@ import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.column.columnChart
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
 import com.patrykandpatrick.vico.core.entry.entryOf
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun GodownStockScreen(
@@ -62,12 +41,28 @@ fun GodownStockScreen(
     liveGodownStockLedger: Map<String, Double>,
     getEstimatedPhysicalStock: (String) -> Double,
     onEndOfSeasonAudit: (String) -> Unit,
+    storageIntakes: List<StorageFacilityIntakeEntity> = emptyList(),
+    onDeleteIntake: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val totalCapacity = godowns.sumOf { it.capacityMt }
     val totalBookStock = godowns.sumOf { liveGodownStockLedger[it.godownId] ?: 0.0 }
     val totalEstimatedStock = godowns.sumOf { getEstimatedPhysicalStock(it.godownId) }
     val availableSpace = (totalCapacity - totalEstimatedStock).coerceAtLeast(0.0)
+
+    var selectedFacilityFilter by remember { mutableStateOf("ALL") }
+    var intakeToDelete by remember { mutableStateOf<StorageFacilityIntakeEntity?>(null) }
+
+    val filteredIntakes = remember(storageIntakes, selectedFacilityFilter) {
+        if (selectedFacilityFilter == "ALL") {
+            storageIntakes
+        } else {
+            storageIntakes.filter { 
+                it.storageFacilityId == selectedFacilityFilter || 
+                it.storageFacilityName.contains(selectedFacilityFilter, ignoreCase = true) 
+            }
+        }
+    }
 
     val modelProducer = remember { ChartEntryModelProducer() }
     LaunchedEffect(godowns, liveGodownStockLedger) {
@@ -100,7 +95,7 @@ fun GodownStockScreen(
                 ) {
                     Column {
                         Text("Total Warehouse Inventory", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
-                        Text("Real-time telemetry across all 4 storage structures", style = MaterialTheme.typography.bodySmall, color = Color(0xFF94A3B8))
+                        Text("Real-time storage facilities & intake database", style = MaterialTheme.typography.bodySmall, color = Color(0xFF94A3B8))
                     }
                     Box(
                         modifier = Modifier
@@ -142,6 +137,7 @@ fun GodownStockScreen(
             )
         }
 
+        // Silos and Storage Units
         Text(
             text = "SILOS & STORAGE UNITS",
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
@@ -164,6 +160,215 @@ fun GodownStockScreen(
                     else -> Color(0xFFEAB308)
                 }
             )
+        }
+
+        // Storage Facility Grain Intake History (Database Lots)
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "STORAGE FACILITY INTAKE LEDGER",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
+                    color = Color(0xFFFF9800)
+                )
+                Text(
+                    text = "${filteredIntakes.size} grain lots stored in database",
+                    fontSize = 11.sp,
+                    color = Color(0xFF94A3B8)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF38BDF8).copy(alpha = 0.2f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text("ROOM DB", color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            }
+        }
+
+        // Facility Filter Chips
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = selectedFacilityFilter == "ALL",
+                onClick = { selectedFacilityFilter = "ALL" },
+                label = { Text("All Silos (${storageIntakes.size})", fontSize = 11.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFFF9800).copy(alpha = 0.25f),
+                    selectedLabelColor = Color(0xFFFF9800)
+                )
+            )
+            godowns.forEach { g ->
+                val count = storageIntakes.count { it.storageFacilityId == g.godownId || it.storageFacilityName.contains(g.displayName) }
+                FilterChip(
+                    selected = selectedFacilityFilter == g.godownId || selectedFacilityFilter == g.displayName,
+                    onClick = { selectedFacilityFilter = g.godownId },
+                    label = { Text("${g.displayName.take(12)} ($count)", fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF38BDF8).copy(alpha = 0.25f),
+                        selectedLabelColor = Color(0xFF38BDF8)
+                    )
+                )
+            }
+        }
+
+        if (filteredIntakes.isEmpty()) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp).fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Inbox, contentDescription = null, tint = Color(0xFF64748B), modifier = Modifier.size(36.dp))
+                    Text("No Grain Intake Records Found", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Generate a gate entry slip to unload and store grain into this facility.", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                }
+            }
+        } else {
+            filteredIntakes.forEach { intake ->
+                StorageIntakeCard(
+                    intake = intake,
+                    onDelete = { intakeToDelete = intake }
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(40.dp))
+    }
+
+    // Delete Confirmation Dialog
+    if (intakeToDelete != null) {
+        val toDelete = intakeToDelete!!
+        AlertDialog(
+            onDismissRequest = { intakeToDelete = null },
+            title = { Text("Delete Storage Intake Record?", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "Are you sure you want to delete slip #${toDelete.tokenNo} for ${toDelete.farmerName} (${toDelete.netWeightKg} kg into ${toDelete.storageFacilityName})?",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteIntake?.invoke(toDelete.id)
+                        intakeToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                ) {
+                    Text("Delete", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { intakeToDelete = null }) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            },
+            containerColor = Color(0xFF1E293B),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+}
+
+@Composable
+private fun StorageIntakeCard(
+    intake: StorageFacilityIntakeEntity,
+    onDelete: () -> Unit
+) {
+    val dateFormat = remember { SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()) }
+
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFFF9800).copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(intake.tokenNo, color = Color(0xFFFF9800), fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(dateFormat.format(Date(intake.intakeTimestamp)), fontSize = 11.sp, color = Color(0xFF94A3B8))
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF38BDF8).copy(alpha = 0.18f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(intake.storageFacilityName, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+
+            // Farmer & Vehicle & Crop
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(intake.farmerName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("${intake.vehicleNumber} • ${intake.cropType}", color = Color(0xFF94A3B8), fontSize = 12.sp)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("${String.format(Locale.US, "%,.2f", intake.netWeightKg)} kg", color = Color(0xFF34D399), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("(${String.format(Locale.US, "%.3f", intake.netWeightMt)} MT)", color = Color(0xFF94A3B8), fontSize = 11.sp)
+                }
+            }
+
+            Divider(color = Color(0xFF334155), thickness = 0.5.dp)
+
+            // Moisture, Bags & Amount
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Opacity, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Moisture: ${intake.moisturePercentage}%", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ShoppingBag, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("${intake.bagCount} Bags", color = Color(0xFFFBBF24), fontSize = 11.sp)
+                    }
+                }
+                Text("₹${String.format(Locale.US, "%,.2f", if (intake.totalAmount > 0) intake.totalAmount else intake.grossBillAmount)}", color = Color(0xFFFF9800), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
         }
     }
 }

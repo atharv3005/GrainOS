@@ -11,6 +11,7 @@ import com.example.data.model.InventoryReconciliationEntity
 import com.example.data.model.IoTTelemetryEntity
 import com.example.data.model.OutboundDispatchEntity
 import com.example.data.model.ProcurementEntity
+import com.example.data.model.StorageFacilityIntakeEntity
 import com.example.data.model.TradeBookingEntity
 import com.example.data.model.TruckRejectionEntity
 import com.example.data.model.VendorLedgerEntity
@@ -22,6 +23,7 @@ import kotlinx.coroutines.launch
     entities = [
         ProcurementEntity::class,
         GodownEntity::class,
+        StorageFacilityIntakeEntity::class,
         OutboundDispatchEntity::class,
         IoTTelemetryEntity::class,
         TradeBookingEntity::class,
@@ -30,12 +32,13 @@ import kotlinx.coroutines.launch
         VendorLedgerEntity::class,
         InventoryReconciliationEntity::class,
     ],
-    version = 6,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun procurementDao(): ProcurementDao
     abstract fun godownDao(): GodownDao
+    abstract fun storageIntakeDao(): StorageIntakeDao
     abstract fun dispatchDao(): DispatchDao
     abstract fun iotTelemetryDao(): IoTTelemetryDao
     abstract fun tradeDao(): TradeDao
@@ -72,6 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
                     scope.launch(Dispatchers.IO) {
                         populateInitialGodowns(database.godownDao())
                         populateInitialProcurements(database.procurementDao(), database.vendorLedgerDao())
+                        populateInitialStorageIntakes(database.storageIntakeDao())
                         populateInitialTelemetry(database.iotTelemetryDao())
                         populateInitialTrades(database.tradeDao(), database.dispatchDao())
                         populateInitialExpenses(database.expenseDao(), database.vendorLedgerDao())
@@ -267,6 +271,64 @@ abstract class AppDatabase : RoomDatabase() {
                         notes = "Post-Dated Cheque issued for Sauda Patti #TK-1082"
                     )
                 )
+            }
+
+            suspend fun populateInitialStorageIntakes(storageIntakeDao: StorageIntakeDao) {
+                val initialIntakes = listOf(
+                    StorageFacilityIntakeEntity(
+                        storageFacilityId = "GODOWN_A",
+                        storageFacilityName = "Godown A (Main Silo)",
+                        tokenNo = "TK-1081",
+                        farmerName = "Ramesh Patil",
+                        mobileNumber = "+91 98224 51230",
+                        village = "Pimpalner, Dhule",
+                        vehicleNumber = "MH 15 AB 1234",
+                        cropType = "MAIZE",
+                        qualityGrade = "GRADE_A",
+                        grossWeightKg = 8420.0,
+                        tareWeightKg = 3260.0,
+                        netWeightKg = 5160.0,
+                        netWeightMt = 5.16,
+                        bagCount = 103,
+                        bagWeightKg = 50.0,
+                        moisturePercentage = 12.8,
+                        temperatureCelsius = 23.8,
+                        ratePerQuintal = 2450.0,
+                        grossBillAmount = 126420.0,
+                        totalAmount = 124523.70,
+                        paymentStatus = "PAID",
+                        paymentMode = "RTGS",
+                        intakeTimestamp = System.currentTimeMillis() - 1000 * 60 * 45,
+                        notes = "Unloaded into Bay 1-A • Moisture tested 12.8%"
+                    ),
+                    StorageFacilityIntakeEntity(
+                        storageFacilityId = "GODOWN_A",
+                        storageFacilityName = "Godown A (Main Silo)",
+                        tokenNo = "TK-1082",
+                        farmerName = "Suresh Shinde",
+                        mobileNumber = "+91 94231 87654",
+                        village = "Sakri, Dhule",
+                        vehicleNumber = "MH 18 Q 4589",
+                        cropType = "MAIZE",
+                        qualityGrade = "GRADE_B",
+                        grossWeightKg = 9150.0,
+                        tareWeightKg = 3420.0,
+                        netWeightKg = 5730.0,
+                        netWeightMt = 5.73,
+                        bagCount = 114,
+                        bagWeightKg = 50.0,
+                        moisturePercentage = 13.4,
+                        temperatureCelsius = 24.0,
+                        ratePerQuintal = 2380.0,
+                        grossBillAmount = 136374.0,
+                        totalAmount = 134328.39,
+                        paymentStatus = "PENDING",
+                        paymentMode = "CHEQUE",
+                        intakeTimestamp = System.currentTimeMillis() - 1000 * 60 * 90,
+                        notes = "Unloaded into Bay 1-B • Standard 50kg bag packing"
+                    )
+                )
+                storageIntakeDao.insertIntakes(initialIntakes)
             }
 
             suspend fun populateInitialTelemetry(telemetryDao: IoTTelemetryDao) {

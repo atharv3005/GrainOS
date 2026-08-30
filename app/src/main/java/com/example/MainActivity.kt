@@ -171,6 +171,7 @@ fun GrainOSApp(viewModel: GrainWmsViewModel) {
     val isStreamingActive by viewModel.isStreamingActive.collectAsState()
     val allProcurements by viewModel.allProcurements.collectAsState()
     val allGodowns by viewModel.allGodowns.collectAsState()
+    val allStorageIntakes by viewModel.allStorageIntakes.collectAsState()
     val allDispatches by viewModel.allDispatches.collectAsState()
     val recentTelemetry by viewModel.recentTelemetry.collectAsState()
     val allTrades by viewModel.allTrades.collectAsState()
@@ -328,7 +329,9 @@ fun GrainOSApp(viewModel: GrainWmsViewModel) {
                             activeCrop = activeCrop,
                             liveGodownStockLedger = liveGodownStockLedger,
                             getEstimatedPhysicalStock = { viewModel.getEstimatedPhysicalStock(it) },
-                            onEndOfSeasonAudit = { viewModel.endOfSeasonZeroOut(it) }
+                            onEndOfSeasonAudit = { viewModel.endOfSeasonZeroOut(it) },
+                            storageIntakes = allStorageIntakes,
+                            onDeleteIntake = { viewModel.deleteStorageIntake(it) }
                         )
                     }
                     NavigationTab.RECEIPTS -> {
@@ -343,7 +346,8 @@ fun GrainOSApp(viewModel: GrainWmsViewModel) {
                                 viewModel.updatePaymentStatus(id, status)
                             },
                             onEdit = { viewModel.updateProcurement(it) },
-                            onDelete = { viewModel.deleteProcurement(it.id) }
+                            onDelete = { viewModel.deleteProcurement(it.id) },
+                            onToggleArchive = { viewModel.toggleArchive(it) }
                         )
                     }
                     NavigationTab.AI_ADVISOR -> {

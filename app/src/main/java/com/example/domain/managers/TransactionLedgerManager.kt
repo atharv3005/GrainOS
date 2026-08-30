@@ -15,7 +15,7 @@ class TransactionLedgerManager(
     suspend fun recordProcurement(procurement: ProcurementEntity) {
         repository.insertProcurement(procurement)
         if (procurement.status == ProcurementStatus.COMPLETED.name || procurement.status == ProcurementStatus.UNLOADED.name) {
-            inventoryManager.addWeightToSilo(procurement.godownAssigned, procurement.netWeightKg)
+            repository.recordStorageIntake(procurement.godownAssigned, procurement)
         }
     }
 

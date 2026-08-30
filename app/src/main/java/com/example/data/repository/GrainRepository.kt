@@ -14,6 +14,7 @@ import com.example.data.model.PaymentStatus
 import com.example.data.model.ProcurementEntity
 import com.example.data.model.ProcurementStatus
 import com.example.data.model.QualityGrade
+import com.example.data.model.StorageFacilityIntakeEntity
 import com.example.data.model.TradeBookingEntity
 import com.example.data.model.TruckRejectionEntity
 import com.example.data.model.VendorLedgerEntity
@@ -26,6 +27,7 @@ import kotlin.random.Random
 class GrainRepository(private val db: AppDatabase) {
     private val procurementDao = db.procurementDao()
     private val godownDao = db.godownDao()
+    private val storageIntakeDao = db.storageIntakeDao()
     private val dispatchDao = db.dispatchDao()
     private val telemetryDao = db.iotTelemetryDao()
     private val tradeDao = db.tradeDao()
@@ -36,6 +38,7 @@ class GrainRepository(private val db: AppDatabase) {
 
     val allProcurements: Flow<List<ProcurementEntity>> = procurementDao.getAllProcurements()
     val allGodowns: Flow<List<GodownEntity>> = godownDao.getAllGodowns()
+    val allStorageIntakes: Flow<List<StorageFacilityIntakeEntity>> = storageIntakeDao.getAllIntakes()
     val allDispatches: Flow<List<OutboundDispatchEntity>> = dispatchDao.getAllDispatches()
     val recentTelemetry: Flow<List<IoTTelemetryEntity>> = telemetryDao.getRecentTelemetry()
     val allTrades: Flow<List<TradeBookingEntity>> = tradeDao.getAllTrades()
@@ -291,15 +294,11 @@ class GrainRepository(private val db: AppDatabase) {
         )
         procurementDao.updateProcurement(updated)
 
-        // Increment Godown Stock in Real-Time
-        val godown = godownDao.findGodown(item.godownAssigned)
-            ?: godownDao.getGodownById(item.godownAssigned)
-            ?: godownDao.getFirstGodown()
-        if (godown != null) {
-            val addedMt = netKg / 1000.0
-            val newStock = (godown.currentStockMt + addedMt).coerceAtMost(godown.capacityMt)
-            godownDao.updateGodown(godown.copy(currentStockMt = newStock, lastUpdated = System.currentTimeMillis()))
-        }
+        // Increment Godown Stock and Store Grain Lot in Storage Facility Database
+        recordStorageIntake(
+            storageFacilityNameOrId = item.godownAssigned,
+            procurement = updated
+        )
 
         // Add to Farmer Vendor Ledger
         vendorLedgerDao.insertLedgerEntry(
@@ -734,6 +733,10 @@ class GrainRepository(private val db: AppDatabase) {
         procurementDao.updateProcurement(item.copy(paymentStatus = newStatus.name))
     }
 
+    suspend fun setProcurementArchived(procurementId: Long, isArchived: Boolean) = withContext(Dispatchers.IO) {
+        procurementDao.updateArchiveStatus(procurementId, isArchived)
+    }
+
     suspend fun deleteProcurement(procurementId: Long) = withContext(Dispatchers.IO) {
         procurementDao.deleteProcurement(procurementId)
     }
@@ -765,4 +768,82 @@ class GrainRepository(private val db: AppDatabase) {
     suspend fun getGodownsList(): List<GodownEntity> = withContext(Dispatchers.IO) {
         godownDao.getAllGodowns().firstOrNull() ?: emptyList()
     }
+
+    // Storage Facility Lot Intake & Grain Details Storage Persistence
+    suspend fun recordStorageIntake(
+        storageFacilityNameOrId: String,
+        procurement: ProcurementEntity,
+        customMoisture: Double? = null
+    ): StorageFacilityIntakeEntity = withContext(Dispatchers.IO) {
+        val godown = godownDao.findGodown(storageFacilityNameOrId)
+            ?: godownDao.getGodownById(storageFacilityNameOrId)
+            ?: godownDao.getFirstGodown()
+
+        val facilityId = godown?.godownId ?: "GODOWN_A"
+        val facilityName = godown?.displayName ?: storageFacilityNameOrId.ifBlank { "Storage Facility A" }
+
+        val netKg = procurement.netWeightKg
+        val incomingMt = netKg / 1000.0
+        val incomingMoisture = customMoisture
+            ?: (if (procurement.moisturePercentage > 0.0) procurement.moisturePercentage else 12.4)
+
+        val intakeEntity = StorageFacilityIntakeEntity(
+            storageFacilityId = facilityId,
+            storageFacilityName = facilityName,
+            tokenNo = procurement.tokenNo,
+            farmerName = procurement.farmerName,
+            mobileNumber = procurement.mobileNumber,
+            village = procurement.village,
+            vehicleNumber = procurement.vehicleNumber,
+            cropType = procurement.cropType,
+            qualityGrade = procurement.qualityGrade.ifBlank { "GRADE_A" },
+            grossWeightKg = procurement.grossWeightKg,
+            tareWeightKg = procurement.tareWeightKg,
+            netWeightKg = netKg,
+            netWeightMt = incomingMt,
+            bagCount = if (procurement.bagCount > 0) procurement.bagCount else (netKg / 50.0).toInt().coerceAtLeast(1),
+            bagWeightKg = if (procurement.bagWeightKg > 0) procurement.bagWeightKg else 50.0,
+            moisturePercentage = incomingMoisture,
+            temperatureCelsius = godown?.temperatureCelsius ?: 24.0,
+            ratePerQuintal = procurement.ratePerQuintal,
+            grossBillAmount = procurement.grossBillAmount,
+            totalAmount = procurement.totalAmount,
+            paymentStatus = procurement.paymentStatus,
+            paymentMode = procurement.paymentMode,
+            intakeTimestamp = if (procurement.completedTimestamp > 0) procurement.completedTimestamp else System.currentTimeMillis(),
+            notes = "Stored into $facilityName • Moisture: $incomingMoisture% • Net: ${netKg.toInt()} kg"
+        )
+
+        // Insert into storage_facility_intakes table
+        storageIntakeDao.insertIntake(intakeEntity)
+
+        // Update target Godown Entity (Stock, Dynamic Weighted Avg Moisture, Active Crop, Last Updated)
+        if (godown != null) {
+            val prevStockMt = godown.currentStockMt
+            val newStockMt = (prevStockMt + incomingMt).coerceAtMost(godown.capacityMt)
+            val newAvgMoisture = if (newStockMt > 0.0) {
+                ((prevStockMt * godown.averageMoisture) + (incomingMt * incomingMoisture)) / newStockMt
+            } else {
+                incomingMoisture
+            }
+            val roundedMoisture = (Math.round(newAvgMoisture * 10.0) / 10.0)
+
+            val updatedGodown = godown.copy(
+                currentStockMt = newStockMt,
+                averageMoisture = roundedMoisture,
+                activeCrop = procurement.cropType,
+                lastUpdated = System.currentTimeMillis()
+            )
+            godownDao.updateGodown(updatedGodown)
+        }
+
+        intakeEntity
+    }
+
+    suspend fun deleteStorageIntake(id: Long) = withContext(Dispatchers.IO) {
+        storageIntakeDao.deleteIntake(id)
+    }
+
+    fun getIntakesForFacility(facilityId: String): Flow<List<StorageFacilityIntakeEntity>> =
+        storageIntakeDao.getIntakesForFacility(facilityId)
 }

@@ -13,7 +13,13 @@ interface ProcurementDao {
     @Query("SELECT * FROM procurements ORDER BY id DESC")
     fun getAllProcurements(): Flow<List<ProcurementEntity>>
 
-    @Query("SELECT * FROM procurements WHERE status != 'COMPLETED' ORDER BY id DESC")
+    @Query("SELECT * FROM procurements WHERE isArchived = 0 ORDER BY id DESC")
+    fun getNonArchivedProcurements(): Flow<List<ProcurementEntity>>
+
+    @Query("SELECT * FROM procurements WHERE isArchived = 1 ORDER BY id DESC")
+    fun getArchivedProcurements(): Flow<List<ProcurementEntity>>
+
+    @Query("SELECT * FROM procurements WHERE status != 'COMPLETED' AND isArchived = 0 ORDER BY id DESC")
     fun getActiveProcurements(): Flow<List<ProcurementEntity>>
 
     @Query("SELECT * FROM procurements WHERE id = :id")
@@ -27,6 +33,9 @@ interface ProcurementDao {
 
     @Update
     suspend fun updateProcurement(procurement: ProcurementEntity)
+
+    @Query("UPDATE procurements SET isArchived = :isArchived WHERE id = :id")
+    suspend fun updateArchiveStatus(id: Long, isArchived: Boolean)
 
     @Query("DELETE FROM procurements WHERE id = :id")
     suspend fun deleteProcurement(id: Long)

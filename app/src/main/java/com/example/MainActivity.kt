@@ -15,26 +15,35 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.ListAlt
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Scale
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Warehouse
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,6 +71,8 @@ import androidx.compose.ui.unit.sp
 import com.example.data.model.CropType
 import com.example.data.model.FirmProfile
 import com.example.security.DeviceSecurityReport
+import com.example.security.SecureStorageManager
+import com.example.security.SecurityCheckUtil
 import com.example.ui.components.ArchitectureSpecDialog
 import com.example.ui.components.Dynamic3DGrainBackground
 import com.example.ui.components.ExpenseConfigDialog
@@ -76,27 +87,41 @@ import com.example.ui.components.TradeBookingDialog
 import com.example.ui.components.TruckRejectionDialog
 import com.example.ui.components.WhatsAppReceiptDialog
 import com.example.ui.screens.AiAdvisorScreen
+import com.example.ui.screens.AuditTrailViewerScreen
 import com.example.ui.screens.BigDashboardScreen
+import com.example.ui.screens.DayEndClosingScreen
+import com.example.ui.screens.DocumentSequenceViewerScreen
 import com.example.ui.screens.ExpenseManagementScreen
 import com.example.ui.screens.FarmerReceiptsScreen
 import com.example.ui.screens.FinancialPnLScreen
 import com.example.ui.screens.FinanceDashboardScreen
 import com.example.ui.screens.GateEntryScreen
 import com.example.ui.screens.GodownStockScreen
-import com.example.ui.screens.InboundProcurementScreen
+import com.example.ui.screens.InventoryMovementViewerScreen
 import com.example.ui.screens.LedgerScreen
 import com.example.ui.screens.OutboundDispatchScreen
+import com.example.ui.screens.PartyMasterScreen
+import com.example.ui.screens.PaymentAllocationScreen
+import com.example.ui.screens.PdcManagementScreen
 import com.example.ui.theme.GrainWmsTheme
+import com.example.ui.viewmodel.FinanceViewModel
+import com.example.ui.viewmodel.GodownViewModel
 import com.example.ui.viewmodel.GrainWmsViewModel
 
 enum class NavigationTab(@androidx.annotation.StringRes val titleResId: Int, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DASHBOARD(R.string.nav_dashboard, Icons.Default.Dashboard),
-    PNL(R.string.nav_pnl, Icons.Default.TrendingUp),
-    FINANCE(R.string.nav_finance, Icons.Default.AccountBalanceWallet),
-    EXPENSES(R.string.nav_expenses, Icons.Default.Receipt),
+    PARTIES(R.string.nav_parties, Icons.Default.People),
     INBOUND(R.string.nav_inbound, Icons.Default.Scale),
     DISPATCH(R.string.nav_dispatch, Icons.Default.LocalShipping),
     GODOWNS(R.string.nav_godowns, Icons.Default.Warehouse),
+    PDCS(R.string.nav_pdcs, Icons.Default.Schedule),
+    ALLOCATIONS(R.string.nav_allocations, Icons.Default.AccountBalance),
+    MOVEMENTS(R.string.nav_movements, Icons.Default.SwapHoriz),
+    AUDIT(R.string.nav_audit, Icons.Default.History),
+    EOD(R.string.nav_eod, Icons.Default.Lock),
+    PNL(R.string.nav_pnl, Icons.Default.TrendingUp),
+    FINANCE(R.string.nav_finance, Icons.Default.AccountBalanceWallet),
+    EXPENSES(R.string.nav_expenses, Icons.Default.Receipt),
     RECEIPTS(R.string.nav_receipts, Icons.Default.ReceiptLong),
     LEDGER(R.string.nav_ledger, Icons.Default.ListAlt),
     AI_ADVISOR(R.string.nav_ai_advisor, Icons.Default.AutoAwesome)
@@ -104,6 +129,8 @@ enum class NavigationTab(@androidx.annotation.StringRes val titleResId: Int, val
 
 class MainActivity : ComponentActivity() {
     private val viewModel: GrainWmsViewModel by viewModels()
+    private val financeViewModel: FinanceViewModel by viewModels()
+    private val godownViewModel: GodownViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val prefs = getSharedPreferences("crash_prefs", android.content.Context.MODE_PRIVATE)
@@ -140,14 +167,22 @@ class MainActivity : ComponentActivity() {
             val activeCrop by viewModel.activeCrop.collectAsState()
 
             GrainWmsTheme(darkTheme = true, activeCrop = activeCrop) {
-                GrainOSApp(viewModel = viewModel)
+                GrainOSApp(
+                    viewModel = viewModel,
+                    financeViewModel = financeViewModel,
+                    godownViewModel = godownViewModel
+                )
             }
         }
     }
 }
 
 @Composable
-fun GrainOSApp(viewModel: GrainWmsViewModel) {
+fun GrainOSApp(
+    viewModel: GrainWmsViewModel,
+    financeViewModel: FinanceViewModel,
+    godownViewModel: GodownViewModel
+) {
     val activeCrop by viewModel.activeCrop.collectAsState()
     val firmProfile by viewModel.firmProfile.collectAsState()
     val securityReport by viewModel.securityReport.collectAsState()
@@ -186,11 +221,8 @@ fun GrainOSApp(viewModel: GrainWmsViewModel) {
 
     val aiResult by viewModel.aiAnalysisResult.collectAsState()
     val isAiLoading by viewModel.isAiLoading.collectAsState()
-    val isSubmittingDispatch by viewModel.isSubmittingDispatch.collectAsState()
 
     var currentTab by remember { mutableStateOf(NavigationTab.DASHBOARD) }
-
-    // Dynamic Language Switcher State
     var isFinanceUnlocked by remember { mutableStateOf(false) }
 
     var appLanguage by remember { mutableStateOf("en") }
@@ -203,323 +235,349 @@ fun GrainOSApp(viewModel: GrainWmsViewModel) {
         androidx.compose.ui.platform.LocalConfiguration provides configuration
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // 1. Dynamic 3D Grain Animated Canvas (shifts geometry & palette on crop switch!)
             Dynamic3DGrainBackground(activeCrop = activeCrop)
 
-            // 2. Main Scaffold Layer
             Scaffold(
-            modifier = Modifier.fillMaxSize(),
-            containerColor = Color.Transparent,
-            topBar = {
-                GrainOSTopBar(
-                    activeCrop = activeCrop,
-                    firmProfile = firmProfile,
-                    securityReport = securityReport,
-                    isStreamingActive = isStreamingActive,
-                    appLanguage = appLanguage,
-                    onLanguageChanged = { appLanguage = it },
-                    onOpenSecurity = { viewModel.setShowSecurityDialog(true) },
-                    onOpenFirmLogin = { viewModel.setShowFirmLoginDialog(true) },
-                    onOpenArchitecture = { viewModel.setShowArchitectureDialog(true) },
-                    onOpenAiAdvisor = { currentTab = NavigationTab.AI_ADVISOR }
-                )
-            },
-            bottomBar = {
-                GrainOSBottomNavBar(
-                    currentTab = currentTab,
-                    onTabSelected = { currentTab = it },
-                    accentColor = activeCrop.primaryColor
-                )
-            }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                when (currentTab) {
-                    NavigationTab.DASHBOARD -> {
-                        BigDashboardScreen(
-                            activeCrop = activeCrop,
-                            firmProfile = firmProfile,
-                            onCropSelected = { viewModel.setCrop(it) },
-                            procurements = allProcurements,
-                            godowns = allGodowns,
-                            liveGodownStockLedger = liveGodownStockLedger,
-                            trades = allTrades,
-                            telemetryLogs = recentTelemetry,
-                            isStreamingActive = isStreamingActive,
-                            onToggleStreaming = { viewModel.toggleStreaming() },
-                            onInjectTestPacket = { viewModel.injectTestTelemetryPulse() },
-                            onStartNewInbound = { currentTab = NavigationTab.INBOUND },
-                            onOpenWhatsAppReceipt = { viewModel.openWhatsAppReceipt(it, false) },
-                            onOpenPdfReceipt = { viewModel.openPdfReceipt(it) },
-                            onOpenAiAdvisor = { currentTab = NavigationTab.AI_ADVISOR },
-                            onOpenArchitecture = { viewModel.setShowArchitectureDialog(true) },
-                            onOpenFirmLogin = { viewModel.setShowFirmLoginDialog(true) },
-                            onOpenSecurity = { viewModel.setShowSecurityDialog(true) },
-                            onNavigateToPnL = { currentTab = NavigationTab.PNL },
-                            onOpenBookTrade = { viewModel.setShowTradeBookingDialog(true) },
-                            onOpenExpenses = { currentTab = NavigationTab.EXPENSES }
-                            , smartInsight = viewModel.smartInsight.collectAsState().value,
-                            onRefreshInsight = { viewModel.refreshSmartInsight(allProcurements, allGodowns) }
-                        )
-                    }
-                    NavigationTab.PNL -> {
-                        FinancialPnLScreen(
-                            activeCrop = activeCrop,
-                            firmProfile = firmProfile,
-                            trades = allTrades,
-                            expenses = allExpenses,
-                            rejections = allRejections,
-                            dispatches = allDispatches,
-                            onOpenBookTrade = { viewModel.setShowTradeBookingDialog(true) },
-                            onOpenAddExpense = { viewModel.setShowExpenseEntryDialog(true) },
-                            onOpenRecordRejection = { viewModel.openTruckRejectionDialog() },
-                            onUpdateTradeStatus = { id, status -> viewModel.updateTradeStatus(id, status) },
-                            onDeleteTrade = { id -> viewModel.deleteTrade(id) },
-                            onDeleteRejection = { id -> viewModel.deleteTruckRejection(id) }
-                        )
-                    }
-                    NavigationTab.FINANCE -> {
-                        FinanceDashboardScreen(
-                            isUnlocked = isFinanceUnlocked,
-                            onUnlockSuccess = { isFinanceUnlocked = true },
-                            activeCrop = activeCrop,
-                            firmProfile = firmProfile,
-                            allTrades = allTrades,
-                            allProcurements = allProcurements,
-                            allExpenses = allExpenses,
-                            allLedgers = allLedgers,
-                            onReceivePayment = { amt, src, notes -> viewModel.receiveCorporatePayment(amt, src, notes) },
-                            onLogInterestExpense = { amt, notes -> viewModel.logInterestExpense(amt, notes) },
-                            onExportCaReport = { viewModel.exportCaReportToExcel(context) }
-                        )
-                    }
-                    NavigationTab.EXPENSES -> {
-                        ExpenseManagementScreen(
-                            isUnlocked = isFinanceUnlocked,
-                            onUnlockSuccess = { isFinanceUnlocked = true },
-                            activeCrop = activeCrop,
-                            expenses = allExpenses,
-                            onOpenAddExpense = { viewModel.setShowExpenseEntryDialog(true) },
-                            onDeleteExpense = { viewModel.deleteExpense(it) }
-                        )
-                    }
-                    NavigationTab.INBOUND -> {
-                        GateEntryScreen(
-                            viewModel = viewModel,
-                            
-                            activeCrop = activeCrop
-                        )
-                    }
-                    NavigationTab.DISPATCH -> {
-                        OutboundDispatchScreen(
-                            dispatches = allDispatches,
-                            liveGodownStockLedger = liveGodownStockLedger,
-                            onCreateDispatch = { buyer, dest, veh, crop, godown, tare, gross, rate, onComp -> viewModel.createOutboundDispatch(buyerName = buyer, destination = dest, vehicleNumber = veh, cropType = crop.name, godownSource = godown, tareWeightKg = tare, grossWeightKg = gross, ratePerQuintal = rate, onComplete = { onComp() }) },
-                            
-                            activeCrop = activeCrop,
-                            godowns = allGodowns
-                        )
-                    }
-                    NavigationTab.GODOWNS -> {
-                        GodownStockScreen(
-                            godowns = allGodowns,
-                            activeCrop = activeCrop,
-                            liveGodownStockLedger = liveGodownStockLedger,
-                            getEstimatedPhysicalStock = { viewModel.getEstimatedPhysicalStock(it) },
-                            onEndOfSeasonAudit = { viewModel.endOfSeasonZeroOut(it) },
-                            storageIntakes = allStorageIntakes,
-                            onDeleteIntake = { viewModel.deleteStorageIntake(it) }
-                        )
-                    }
-                    NavigationTab.RECEIPTS -> {
-                        FarmerReceiptsScreen(
-                            procurements = allProcurements,
-                            activeCrop = activeCrop,
-                            onOpenWhatsApp = { viewModel.openWhatsAppReceipt(it, false) },
-                            onOpenPdf = { viewModel.openPdfReceipt(it) },
-                            onDownloadPdf = { com.example.data.export.PdfExporter.downloadProfessionalPdf(context, it, firmProfile) },
-                            onPrintReceipt = { com.example.util.ThermalPrinterHelper.printReceipt(context, it, firmProfile.firmName) },
-                            onTogglePaymentStatus = { id, status ->
-                                viewModel.updatePaymentStatus(id, status)
-                            },
-                            onEdit = { viewModel.updateProcurement(it) },
-                            onDelete = { viewModel.deleteProcurement(it.id) },
-                            onToggleArchive = { viewModel.toggleArchive(it) }
-                        )
-                    }
-                    NavigationTab.AI_ADVISOR -> {
-                        AiAdvisorScreen(
-                            activeCrop = activeCrop,
-                            aiResult = aiResult,
-                            isLoading = isAiLoading,
-                            onRunAnalysis = { crop, moist, temp, godown, name ->
-                                viewModel.runGeminiAnalysis(crop, moist, temp, godown, name)
-                            }
-                        )
-                    }
-                    NavigationTab.LEDGER -> {
-                        LedgerScreen(
-                            viewModel = viewModel
-                        )
+                modifier = Modifier.fillMaxSize(),
+                containerColor = Color.Transparent,
+                topBar = {
+                    GrainOSTopBar(
+                        activeCrop = activeCrop,
+                        firmProfile = firmProfile,
+                        securityReport = securityReport,
+                        isStreamingActive = isStreamingActive,
+                        appLanguage = appLanguage,
+                        onLanguageChanged = { appLanguage = it },
+                        onOpenSecurity = { viewModel.setShowSecurityDialog(true) },
+                        onOpenFirmLogin = { viewModel.setShowFirmLoginDialog(true) },
+                        onOpenArchitecture = { viewModel.setShowArchitectureDialog(true) },
+                        onOpenAiAdvisor = { currentTab = NavigationTab.AI_ADVISOR }
+                    )
+                },
+                bottomBar = {
+                    GrainOSBottomNavBar(
+                        currentTab = currentTab,
+                        onTabSelected = { currentTab = it },
+                        accentColor = activeCrop.primaryColor
+                    )
+                }
+            ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    when (currentTab) {
+                        NavigationTab.DASHBOARD -> {
+                            BigDashboardScreen(
+                                activeCrop = activeCrop,
+                                firmProfile = firmProfile,
+                                onCropSelected = { viewModel.setCrop(it) },
+                                procurements = allProcurements,
+                                godowns = allGodowns,
+                                liveGodownStockLedger = liveGodownStockLedger,
+                                trades = allTrades,
+                                telemetryLogs = recentTelemetry,
+                                isStreamingActive = isStreamingActive,
+                                onToggleStreaming = { viewModel.toggleStreaming() },
+                                onInjectTestPacket = { viewModel.injectTestTelemetryPulse() },
+                                onStartNewInbound = { currentTab = NavigationTab.INBOUND },
+                                onOpenWhatsAppReceipt = { viewModel.openWhatsAppReceipt(it, false) },
+                                onOpenPdfReceipt = { viewModel.openPdfReceipt(it) },
+                                onOpenAiAdvisor = { currentTab = NavigationTab.AI_ADVISOR },
+                                onOpenArchitecture = { viewModel.setShowArchitectureDialog(true) },
+                                onOpenFirmLogin = { viewModel.setShowFirmLoginDialog(true) },
+                                onOpenSecurity = { viewModel.setShowSecurityDialog(true) },
+                                onNavigateToPnL = { currentTab = NavigationTab.PNL },
+                                onOpenBookTrade = { viewModel.setShowTradeBookingDialog(true) },
+                                onOpenExpenses = { currentTab = NavigationTab.EXPENSES },
+                                smartInsight = viewModel.smartInsight.collectAsState().value,
+                                onRefreshInsight = { viewModel.refreshSmartInsight(allProcurements, allGodowns) }
+                            )
+                        }
+                        NavigationTab.PARTIES -> {
+                            PartyMasterScreen(viewModel = financeViewModel)
+                        }
+                        NavigationTab.PDCS -> {
+                            PdcManagementScreen(viewModel = financeViewModel)
+                        }
+                        NavigationTab.AUDIT -> {
+                            AuditTrailViewerScreen(viewModel = financeViewModel)
+                        }
+                        NavigationTab.MOVEMENTS -> {
+                            InventoryMovementViewerScreen(viewModel = godownViewModel)
+                        }
+                        NavigationTab.ALLOCATIONS -> {
+                            PaymentAllocationScreen(viewModel = financeViewModel)
+                        }
+                        NavigationTab.EOD -> {
+                            DayEndClosingScreen(viewModel = financeViewModel)
+                        }
+                        NavigationTab.PNL -> {
+                            FinancialPnLScreen(
+                                activeCrop = activeCrop,
+                                firmProfile = firmProfile,
+                                trades = allTrades,
+                                expenses = allExpenses,
+                                rejections = allRejections,
+                                dispatches = allDispatches,
+                                onOpenBookTrade = { viewModel.setShowTradeBookingDialog(true) },
+                                onOpenAddExpense = { viewModel.setShowExpenseEntryDialog(true) },
+                                onOpenRecordRejection = { viewModel.openTruckRejectionDialog() },
+                                onUpdateTradeStatus = { id, status -> viewModel.updateTradeStatus(id, status) },
+                                onDeleteTrade = { id -> viewModel.deleteTrade(id) },
+                                onDeleteRejection = { id -> viewModel.deleteTruckRejection(id) }
+                            )
+                        }
+                        NavigationTab.FINANCE -> {
+                            FinanceDashboardScreen(
+                                isUnlocked = isFinanceUnlocked,
+                                onUnlockSuccess = { isFinanceUnlocked = true },
+                                activeCrop = activeCrop,
+                                firmProfile = firmProfile,
+                                allTrades = allTrades,
+                                allProcurements = allProcurements,
+                                allExpenses = allExpenses,
+                                allLedgers = allLedgers,
+                                onReceivePayment = { amt, src, notes -> viewModel.receiveCorporatePayment(amt, src, notes) },
+                                onLogInterestExpense = { amt, notes -> viewModel.logInterestExpense(amt, notes) },
+                                onExportCaReport = { viewModel.exportCaReportToExcel(context) }
+                            )
+                        }
+                        NavigationTab.EXPENSES -> {
+                            ExpenseManagementScreen(
+                                isUnlocked = isFinanceUnlocked,
+                                onUnlockSuccess = { isFinanceUnlocked = true },
+                                activeCrop = activeCrop,
+                                expenses = allExpenses,
+                                onOpenAddExpense = { viewModel.setShowExpenseEntryDialog(true) },
+                                onDeleteExpense = { viewModel.deleteExpense(it) }
+                            )
+                        }
+                        NavigationTab.INBOUND -> {
+                            GateEntryScreen(
+                                viewModel = viewModel,
+                                activeCrop = activeCrop
+                            )
+                        }
+                        NavigationTab.DISPATCH -> {
+                            OutboundDispatchScreen(
+                                dispatches = allDispatches,
+                                liveGodownStockLedger = liveGodownStockLedger,
+                                onCreateDispatch = { buyer, dest, veh, crop, godown, tare, gross, rate, onComp ->
+                                    viewModel.createOutboundDispatch(
+                                        buyerName = buyer,
+                                        destination = dest,
+                                        vehicleNumber = veh,
+                                        cropType = crop.name,
+                                        godownSource = godown,
+                                        tareWeightKg = tare,
+                                        grossWeightKg = gross,
+                                        ratePerQuintal = rate,
+                                        onComplete = { onComp() }
+                                    )
+                                },
+                                activeCrop = activeCrop,
+                                godowns = allGodowns
+                            )
+                        }
+                        NavigationTab.GODOWNS -> {
+                            GodownStockScreen(
+                                godowns = allGodowns,
+                                activeCrop = activeCrop,
+                                liveGodownStockLedger = liveGodownStockLedger,
+                                getEstimatedPhysicalStock = { viewModel.getEstimatedPhysicalStock(it) },
+                                onEndOfSeasonAudit = { viewModel.endOfSeasonZeroOut(it) },
+                                storageIntakes = allStorageIntakes,
+                                onDeleteIntake = { viewModel.deleteStorageIntake(it) }
+                            )
+                        }
+                        NavigationTab.RECEIPTS -> {
+                            FarmerReceiptsScreen(
+                                procurements = allProcurements,
+                                activeCrop = activeCrop,
+                                onOpenWhatsApp = { viewModel.openWhatsAppReceipt(it, false) },
+                                onOpenPdf = { viewModel.openPdfReceipt(it) },
+                                onDownloadPdf = { com.example.data.export.PdfExporter.downloadProfessionalPdf(context, it, firmProfile) },
+                                onPrintReceipt = { com.example.util.ThermalPrinterHelper.printReceipt(context, it, firmProfile.firmName) },
+                                onTogglePaymentStatus = { id, status ->
+                                    viewModel.updatePaymentStatus(id, status)
+                                },
+                                onEdit = { viewModel.updateProcurement(it) },
+                                onDelete = { viewModel.deleteProcurement(it.id) },
+                                onToggleArchive = { viewModel.toggleArchive(it) }
+                            )
+                        }
+                        NavigationTab.AI_ADVISOR -> {
+                            AiAdvisorScreen(
+                                activeCrop = activeCrop,
+                                aiResult = aiResult,
+                                isLoading = isAiLoading,
+                                onRunAnalysis = { crop, moist, temp, godown, name ->
+                                    viewModel.runGeminiAnalysis(crop, moist, temp, godown, name)
+                                }
+                            )
+                        }
+                        NavigationTab.LEDGER -> {
+                            LedgerScreen(
+                                viewModel = viewModel
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // Active Dialog Overlays
-        if (showOnboarding) {
-            OnboardingSetupDialog(
-                currentProfile = firmProfile,
-                onCompleteSetup = { name, cap, crop, facs ->
-                    viewModel.completeOnboarding(
-                        firmName = name,
-                        capacityMt = cap,
-                        mainCrop = crop,
-                        facilities = facs
-                    )
-                },
-                onDismiss = { viewModel.setShowOnboardingDialog(false) }
-            )
-        }
+            // Active Dialog Overlays
+            if (showOnboarding) {
+                OnboardingSetupDialog(
+                    currentProfile = firmProfile,
+                    onCompleteSetup = { name, cap, crop, facs ->
+                        viewModel.completeOnboarding(
+                            firmName = name,
+                            capacityMt = cap,
+                            mainCrop = crop,
+                            facilities = facs
+                        )
+                    },
+                    onDismiss = { viewModel.setShowOnboardingDialog(false) }
+                )
+            }
 
-        if (showExpenseConfig) {
-            ExpenseConfigDialog(
-                firmProfile = firmProfile,
-                activeCrop = activeCrop,
-                onSaveExpenses = { labor, bag, transport, brokerage ->
-                    viewModel.updateExpenseDefaults(labor, bag, transport, brokerage)
-                },
-                onDismiss = { viewModel.setShowExpenseConfigDialog(false) }
-            )
-        }
+            if (showExpenseConfig) {
+                ExpenseConfigDialog(
+                    firmProfile = firmProfile,
+                    activeCrop = activeCrop,
+                    onSaveExpenses = { labor, bag, transport, brokerage ->
+                        viewModel.updateExpenseDefaults(labor, bag, transport, brokerage)
+                    },
+                    onDismiss = { viewModel.setShowExpenseConfigDialog(false) }
+                )
+            }
 
-        if (showTradeBooking) {
-            TradeBookingDialog(
-                firmProfile = firmProfile,
-                activeCrop = activeCrop,
-                onBookTrade = { crop, broker, qty, bookedPrice, farmerPrice, notes ->
-                    viewModel.bookTrade(
-                        cropType = crop,
-                        brokerOrBuyerName = broker,
-                        quantityTons = qty,
-                        bookedPricePerQuintal = bookedPrice,
-                        farmerPurchasePricePerQuintal = farmerPrice,
-                        notes = notes
-                    )
-                },
-                onDismiss = { viewModel.setShowTradeBookingDialog(false) }
-            )
-        }
+            if (showTradeBooking) {
+                TradeBookingDialog(
+                    firmProfile = firmProfile,
+                    activeCrop = activeCrop,
+                    onBookTrade = { crop, broker, qty, bookedPrice, farmerPrice, notes ->
+                        viewModel.bookTrade(
+                            cropType = crop,
+                            brokerOrBuyerName = broker,
+                            quantityTons = qty,
+                            bookedPricePerQuintal = bookedPrice,
+                            farmerPurchasePricePerQuintal = farmerPrice,
+                            notes = notes
+                        )
+                    },
+                    onDismiss = { viewModel.setShowTradeBookingDialog(false) }
+                )
+            }
 
-        if (showExpenseEntry) {
-            ManualExpenseEntryDialog(
-                activeCrop = activeCrop,
-                onSaveExpense = { truck, crop, labor, bags, trans, misc, party, notes ->
-                    viewModel.recordManualExpense(
-                        truckOrBatchRef = truck,
-                        cropType = crop,
-                        laborCost = labor,
-                        bagsCost = bags,
-                        transportCost = trans,
-                        miscCost = misc,
-                        paidToOrParty = party,
-                        notes = notes
-                    )
-                },
-                onDismiss = { viewModel.setShowExpenseEntryDialog(false) }
-            )
-        }
+            if (showExpenseEntry) {
+                ManualExpenseEntryDialog(
+                    activeCrop = activeCrop,
+                    onSaveExpense = { truck, crop, labor, bags, trans, misc, party, notes ->
+                        viewModel.recordManualExpense(
+                            truckOrBatchRef = truck,
+                            cropType = crop,
+                            laborCost = labor,
+                            bagsCost = bags,
+                            transportCost = trans,
+                            miscCost = misc,
+                            paidToOrParty = party,
+                            notes = notes
+                        )
+                    },
+                    onDismiss = { viewModel.setShowExpenseEntryDialog(false) }
+                )
+            }
 
-        if (showTruckRejection) {
-            TruckRejectionDialog(
-                activeCrop = activeCrop,
-                initialTruckNo = rejTruckNo,
-                initialBuyer = rejBuyer,
-                initialWeightKg = rejWeight,
-                onRecordRejection = { truck, buyer, crop, wt, reason, loss, pen, ded, action, notes ->
-                    viewModel.recordTruckRejection(
-                        truckNumber = truck,
-                        buyerOrCompany = buyer,
-                        cropType = crop,
-                        dispatchedWeightKg = wt,
-                        rejectionReason = reason,
-                        transportLoss = loss,
-                        penaltiesDemurrage = pen,
-                        originalLoadingLaborCost = 1500.0,
-                        qualitySalvageDeduction = ded,
-                        salvageAction = action,
-                        notes = notes
-                    )
-                },
-                onDismiss = { viewModel.closeTruckRejectionDialog() }
-            )
-        }
+            if (showTruckRejection) {
+                TruckRejectionDialog(
+                    activeCrop = activeCrop,
+                    initialTruckNo = rejTruckNo,
+                    initialBuyer = rejBuyer,
+                    initialWeightKg = rejWeight,
+                    onRecordRejection = { truck, buyer, crop, wt, reason, loss, pen, ded, action, notes ->
+                        viewModel.recordTruckRejection(
+                            truckNumber = truck,
+                            buyerOrCompany = buyer,
+                            cropType = crop,
+                            dispatchedWeightKg = wt,
+                            rejectionReason = reason,
+                            transportLoss = loss,
+                            penaltiesDemurrage = pen,
+                            originalLoadingLaborCost = 1500.0,
+                            qualitySalvageDeduction = ded,
+                            salvageAction = action,
+                            notes = notes
+                        )
+                    },
+                    onDismiss = { viewModel.closeTruckRejectionDialog() }
+                )
+            }
 
-        if (showSettleDispatch && selectedDispatchForSettlement != null) {
-            SettleDispatchDialog(
-                dispatch = selectedDispatchForSettlement!!,
-                onSettle = { unlWt, pen, frt, lbr, bag, misc, brk, brkRt ->
-                    viewModel.settleUnloadedDispatch(
-                        dispatchId = selectedDispatchForSettlement!!.id,
-                        companyUnloadedWeightKg = unlWt,
-                        qualityPenalty = pen,
-                        freightCost = frt,
-                        laborCost = lbr,
-                        bagCost = bag,
-                        miscCost = misc,
-                        brokerName = brk,
-                        brokerageRatePerQtl = brkRt
-                    )
-                },
-                onDismiss = { viewModel.closeSettleDispatchDialog() }
-            )
-        }
+            if (showSettleDispatch && selectedDispatchForSettlement != null) {
+                SettleDispatchDialog(
+                    dispatch = selectedDispatchForSettlement!!,
+                    onSettle = { unlWt, pen, frt, lbr, bag, misc, brk, brkRt ->
+                        viewModel.settleUnloadedDispatch(
+                            dispatchId = selectedDispatchForSettlement!!.id,
+                            companyUnloadedWeightKg = unlWt,
+                            qualityPenalty = pen,
+                            freightCost = frt,
+                            laborCost = lbr,
+                            bagCost = bag,
+                            miscCost = misc,
+                            brokerName = brk,
+                            brokerageRatePerQtl = brkRt
+                        )
+                    },
+                    onDismiss = { viewModel.closeSettleDispatchDialog() }
+                )
+            }
 
-        if (showSecurity) {
-            SecurityStatusDialog(
-                report = securityReport,
-                onDismiss = { viewModel.setShowSecurityDialog(false) }
-            )
-        }
+            if (showSecurity) {
+                SecurityStatusDialog(
+                    report = securityReport,
+                    onDismiss = { viewModel.setShowSecurityDialog(false) }
+                )
+            }
 
-        if (showFirmLogin) {
-            FirmLoginDialog(
-                currentProfile = firmProfile,
-                activeCrop = activeCrop,
-                onSaveFacilities = { facs -> viewModel.addStorageFacilities(facs) },
-                onSaveProfile = { newProfile ->
-                    viewModel.updateFirmProfile(newProfile)
-                },
-                onDismiss = { viewModel.setShowFirmLoginDialog(false) }
-            )
-        }
+            if (showFirmLogin) {
+                FirmLoginDialog(
+                    currentProfile = firmProfile,
+                    activeCrop = activeCrop,
+                    onSaveFacilities = { facs -> viewModel.addStorageFacilities(facs) },
+                    onSaveProfile = { newProfile ->
+                        viewModel.updateFirmProfile(newProfile)
+                    },
+                    onDismiss = { viewModel.setShowFirmLoginDialog(false) }
+                )
+            }
 
-        selectedWhatsApp?.let { item ->
-            WhatsAppReceiptDialog(
-                procurement = item,
-                firmProfile = firmProfile,
-                isEntryOnly = isWhatsAppEntryOnly,
-                onDismiss = { viewModel.closeWhatsAppReceipt() }
-            )
-        }
+            selectedWhatsApp?.let { item ->
+                WhatsAppReceiptDialog(
+                    procurement = item,
+                    firmProfile = firmProfile,
+                    isEntryOnly = isWhatsAppEntryOnly,
+                    onDismiss = { viewModel.closeWhatsAppReceipt() }
+                )
+            }
 
-        selectedPdf?.let { item ->
-            PdfReceiptDialog(
-                procurement = item,
-                firmProfile = firmProfile,
-                onDismiss = { viewModel.closePdfReceipt() }
-            )
-        }
+            selectedPdf?.let { item ->
+                PdfReceiptDialog(
+                    procurement = item,
+                    firmProfile = firmProfile,
+                    onDismiss = { viewModel.closePdfReceipt() }
+                )
+            }
 
-        if (showArchitecture) {
-            ArchitectureSpecDialog(
-                onDismiss = { viewModel.setShowArchitectureDialog(false) }
-            )
+            if (showArchitecture) {
+                ArchitectureSpecDialog(
+                    onDismiss = { viewModel.setShowArchitectureDialog(false) }
+                )
+            }
         }
-    }
     }
 }
 
@@ -549,7 +607,6 @@ private fun GrainOSTopBar(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Brand & Location (Clickable to switch firm!)
             Row(
                 modifier = Modifier
                     .weight(1f)
@@ -594,17 +651,21 @@ private fun GrainOSTopBar(
                 }
             }
 
-            // Action Icons: Language + Security Status + Firm Config + Architecture + AI Advisor
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                
-                Box(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable {
-                    val nextLang = when (appLanguage) {
-                        "en" -> "hi"
-                        "hi" -> "mr"
-                        else -> "en"
-                    }
-                    onLanguageChanged(nextLang)
-                }.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF1E293B))
+                        .clickable {
+                            val nextLang = when (appLanguage) {
+                                "en" -> "hi"
+                                "hi" -> "mr"
+                                else -> "en"
+                            }
+                            onLanguageChanged(nextLang)
+                        }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
                     Text(
                         text = when (appLanguage) { "en" -> "EN"; "hi" -> "HI"; else -> "MR" },
                         color = Color.White,
@@ -672,54 +733,68 @@ private fun GrainOSBottomNavBar(
     onTabSelected: (NavigationTab) -> Unit,
     accentColor: Color
 ) {
-    NavigationBar(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .navigationBarsPadding(),
-        containerColor = Color(0xFF0F172A).copy(alpha = 0.95f),
+        color = Color(0xFF0F172A).copy(alpha = 0.95f),
         tonalElevation = 8.dp
     ) {
-        val visibleTabs = listOf(
+        val allTabs = listOf(
             NavigationTab.DASHBOARD,
-            NavigationTab.FINANCE,
-            NavigationTab.PNL,
+            NavigationTab.PARTIES,
             NavigationTab.INBOUND,
             NavigationTab.DISPATCH,
             NavigationTab.GODOWNS,
+            NavigationTab.PDCS,
+            NavigationTab.ALLOCATIONS,
+            NavigationTab.MOVEMENTS,
+            NavigationTab.AUDIT,
+            NavigationTab.EOD,
+            NavigationTab.PNL,
+            NavigationTab.FINANCE,
+            NavigationTab.EXPENSES,
             NavigationTab.RECEIPTS
         )
 
-        visibleTabs.forEach { tab ->
-            val isSelected = currentTab == tab
-            NavigationBarItem(
-                selected = isSelected,
-                onClick = { onTabSelected(tab) },
-                icon = {
-                    Icon(
-                        imageVector = tab.icon,
-                        contentDescription = androidx.compose.ui.res.stringResource(tab.titleResId),
-                        modifier = Modifier.size(19.dp)
-                    )
-                },
-                label = {
-                    Text(
-                        text = androidx.compose.ui.res.stringResource(tab.titleResId),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontSize = 9.sp,
-                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Normal
-                        ),
-                        maxLines = 1
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = Color.Black,
-                    selectedTextColor = accentColor,
-                    indicatorColor = accentColor,
-                    unselectedIconColor = Color(0xFF94A3B8),
-                    unselectedTextColor = Color(0xFF64748B)
-                ),
-                modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
-            )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            items(allTabs) { tab ->
+                val isSelected = currentTab == tab
+                Surface(
+                    modifier = Modifier
+                        .clickable { onTabSelected(tab) }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) accentColor.copy(alpha = 0.2f) else Color.Transparent
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = tab.icon,
+                            contentDescription = androidx.compose.ui.res.stringResource(tab.titleResId),
+                            tint = if (isSelected) accentColor else Color(0xFF94A3B8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = androidx.compose.ui.res.stringResource(tab.titleResId),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Normal
+                            ),
+                            color = if (isSelected) accentColor else Color(0xFF64748B),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
         }
     }
 }

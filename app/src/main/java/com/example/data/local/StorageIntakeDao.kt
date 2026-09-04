@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import com.example.data.model.StorageFacilityIntakeEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -11,6 +12,12 @@ import kotlinx.coroutines.flow.Flow
 interface StorageIntakeDao {
     @Query("SELECT * FROM storage_facility_intakes ORDER BY intakeTimestamp DESC")
     fun getAllIntakes(): Flow<List<StorageFacilityIntakeEntity>>
+
+    @Query("SELECT * FROM storage_facility_intakes WHERE id = :id LIMIT 1")
+    suspend fun getIntakeById(id: Long): StorageFacilityIntakeEntity?
+
+    @Query("SELECT * FROM storage_facility_intakes WHERE uuid = :uuid LIMIT 1")
+    suspend fun getIntakeByUuid(uuid: String): StorageFacilityIntakeEntity?
 
     @Query("SELECT * FROM storage_facility_intakes WHERE storageFacilityId = :facilityId OR storageFacilityName = :facilityId OR storageFacilityName LIKE '%' || :facilityId || '%' ORDER BY intakeTimestamp DESC")
     fun getIntakesForFacility(facilityId: String): Flow<List<StorageFacilityIntakeEntity>>
@@ -27,11 +34,12 @@ interface StorageIntakeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertIntakes(intakes: List<StorageFacilityIntakeEntity>)
 
+    @Update
+    suspend fun updateIntake(intake: StorageFacilityIntakeEntity)
+
+    @Deprecated("Prefer logging audit trail and using reversal transactions rather than hard deletion.")
     @Query("DELETE FROM storage_facility_intakes WHERE id = :id")
     suspend fun deleteIntake(id: Long)
-
-    @Query("DELETE FROM storage_facility_intakes")
-    suspend fun deleteAllIntakes()
 
     @Query("SELECT SUM(netWeightKg) FROM storage_facility_intakes WHERE storageFacilityId = :facilityId")
     suspend fun getTotalNetWeightKgForFacility(facilityId: String): Double?

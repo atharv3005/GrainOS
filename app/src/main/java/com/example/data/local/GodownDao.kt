@@ -16,6 +16,9 @@ interface GodownDao {
     @Query("SELECT * FROM godowns WHERE godownId = :id")
     suspend fun getGodownById(id: String): GodownEntity?
 
+    @Query("SELECT * FROM godowns WHERE uuid = :uuid LIMIT 1")
+    suspend fun getGodownByUuid(uuid: String): GodownEntity?
+
     @Query("SELECT * FROM godowns WHERE godownId = :query OR displayName = :query OR displayName LIKE '%' || :query || '%' LIMIT 1")
     suspend fun findGodown(query: String): GodownEntity?
 
@@ -25,8 +28,8 @@ interface GodownDao {
     @Query("SELECT * FROM godowns")
     suspend fun getAllGodownsDirect(): List<GodownEntity>
 
-    @Query("DELETE FROM godowns")
-    suspend fun deleteAllGodowns()
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGodown(godown: GodownEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGodowns(godowns: List<GodownEntity>)
@@ -34,9 +37,21 @@ interface GodownDao {
     @Update
     suspend fun updateGodown(godown: GodownEntity)
 
-    @Query("UPDATE godowns SET currentStockMt = currentStockMt + :weightMt, lastUpdated = :timestamp WHERE godownId = :godownId")
+    @Query("UPDATE godowns SET currentStockMt = currentStockMt + :weightMt, lastUpdated = :timestamp, updated_at = :timestamp WHERE godownId = :godownId")
     suspend fun addStock(godownId: String, weightMt: Double, timestamp: Long = System.currentTimeMillis())
 
-    @Query("UPDATE godowns SET currentStockMt = MAX(0.0, currentStockMt - :weightMt), lastUpdated = :timestamp WHERE godownId = :godownId")
-    suspend fun reduceStock(godownId: String, weightMt: Double, timestamp: Long = System.currentTimeMillis())
+    /**
+     * Atomically reduces godown stock only if sufficient stock exists.
+     * Returns the number of rows updated (1 if successful, 0 if insufficient stock).
+     * NEVER silently clamps to 0.0.
+     */
+    @Query("""
+        UPDATE godowns 
+        SET currentStockMt = currentStockMt - :weightMt, 
+            lastUpdated = :timestamp,
+            updated_at = :timestamp 
+        WHERE godownId = :godownId 
+        AND currentStockMt >= :weightMt
+    """)
+    suspend fun reduceStock(godownId: String, weightMt: Double, timestamp: Long = System.currentTimeMillis()): Int
 }

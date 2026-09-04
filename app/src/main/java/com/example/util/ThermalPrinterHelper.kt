@@ -20,10 +20,16 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+/**
+ * Enterprise Thermal Receipt Printing Helper.
+ * Supports ESC/POS 80mm & 58mm roll printing with dynamic page height calculation to prevent content clipping (BUG-008 Fix).
+ */
 object ThermalPrinterHelper {
 
     fun printReceipt(context: Context, item: ProcurementEntity, firmName: String) {
-        val printManager = context.getSystemService(Context.PRINT_SERVICE) as PrintManager
+        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+            ?: return // Graceful return if Android Print Service is not present
+
         val jobName = "Receipt_${item.tokenNo}"
 
         val printAdapter = object : PrintDocumentAdapter() {
@@ -58,92 +64,99 @@ object ThermalPrinterHelper {
                 callback: WriteResultCallback
             ) {
                 pdfDocument?.let { doc ->
-                    // 80mm Thermal Printer Width ~ 3 inches ~ 216 pts (72 pts per inch)
-                    // Let's use 250x500 for thermal slip
                     val pageWidth = 280
-                    val pageHeight = 500
                     
+                    // Pre-calculate dynamic page height (BUG-008 Fix)
+                    val baseLines = 15
+                    val optionalLines = (if (item.totalMandiCess > 0) 1 else 0) +
+                                        (if (item.tdsDeductedAmount > 0) 1 else 0) +
+                                        (if (!item.utrOrChequeNo.isNullOrBlank()) 1 else 0) +
+                                        (if (!item.village.isNullOrBlank()) 1 else 0)
+                    val calculatedHeight = 220 + ((baseLines + optionalLines) * 22) + 100 // Dynamic height + 100pt buffer
+                    val pageHeight = calculatedHeight.coerceAtLeast(550)
+
                     val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
                     val page = doc.startPage(pageInfo)
-                    
+
                     val canvas: Canvas = page.canvas
-                    val paint = Paint()
-                    paint.color = Color.BLACK
-                    
+                    val paint = Paint().apply { color = Color.BLACK }
+
                     // Header
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    paint.textSize = 18f
+                    paint.textSize = 16f
                     paint.textAlign = Paint.Align.CENTER
-                    
-                    var yOffset = 40f
+
+                    var yOffset = 35f
                     canvas.drawText(firmName, pageWidth / 2f, yOffset, paint)
-                    
-                    yOffset += 25f
-                    paint.textSize = 14f
+
+                    yOffset += 22f
+                    paint.textSize = 12f
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
                     canvas.drawText("Gate Pass / Farmer Receipt", pageWidth / 2f, yOffset, paint)
-                    
-                    yOffset += 30f
-                    
-                    // Divider
-                    canvas.drawLine(20f, yOffset, pageWidth - 20f, yOffset, paint)
-                    yOffset += 20f
-                    
+
+                    yOffset += 25f
+                    canvas.drawLine(15f, yOffset, pageWidth - 15f, yOffset, paint)
+                    yOffset += 18f
+
                     // Content
                     paint.textAlign = Paint.Align.LEFT
-                    paint.textSize = 12f
-                    
+                    paint.textSize = 11f
+
                     val dateFormat = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.ENGLISH)
                     val dateStr = dateFormat.format(item.completedTimestamp)
                     val inrFormat = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
                     val netAmt = inrFormat.format(item.totalAmount)
-                    
-                    val leftX = 20f
-                    val lineHeight = 20f
-                    
-                    canvas.drawText("Token No: ${item.tokenNo}", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Date: $dateStr", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Farmer: ${item.farmerName}", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Vehicle: ${item.vehicleNumber}", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    
-                    yOffset += 10f
-                    canvas.drawLine(20f, yOffset, pageWidth - 20f, yOffset, paint)
-                    yOffset += 20f
-                    
-                    canvas.drawText("Gross Wt: ${item.grossWeightKg} kg", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Tare Wt: ${item.tareWeightKg} kg", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Net Wt: ${item.netWeightKg} kg", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Moisture: ${item.moisturePercentage}%", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Deduction: ${(item.grossWeightKg - item.tareWeightKg - item.netWeightKg)} kg", leftX, yOffset, paint)
-                    yOffset += lineHeight
-                    canvas.drawText("Rate: ₹${item.ratePerQuintal} / qtl", leftX, yOffset, paint)
-                    
-                    yOffset += 10f
-                    canvas.drawLine(20f, yOffset, pageWidth - 20f, yOffset, paint)
-                    yOffset += 25f
-                    
+
+                    val leftX = 15f
+                    val lineHeight = 18f
+
+                    canvas.drawText("Token No: ${item.tokenNo}", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Date: $dateStr", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Farmer: ${item.farmerName}", leftX, yOffset, paint); yOffset += lineHeight
+                    if (!item.village.isNullOrBlank()) {
+                        canvas.drawText("Village: ${item.village}", leftX, yOffset, paint); yOffset += lineHeight
+                    }
+                    canvas.drawText("Vehicle: ${item.vehicleNumber}", leftX, yOffset, paint); yOffset += lineHeight
+
+                    yOffset += 8f
+                    canvas.drawLine(15f, yOffset, pageWidth - 15f, yOffset, paint)
+                    yOffset += 18f
+
+                    canvas.drawText("Crop: ${item.cropType}", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Gross Wt: ${item.grossWeightKg} kg", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Tare Wt: ${item.tareWeightKg} kg", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Net Wt: ${item.netWeightKg} kg", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Moisture: ${item.moisturePercentage}%", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Rate: ₹${item.ratePerQuintal} / qtl", leftX, yOffset, paint); yOffset += lineHeight
+                    canvas.drawText("Gross Value: ${inrFormat.format(item.grossBillAmount)}", leftX, yOffset, paint); yOffset += lineHeight
+
+                    if (item.totalMandiCess > 0) {
+                        canvas.drawText("APMC Cess (1.5%): -${inrFormat.format(item.totalMandiCess)}", leftX, yOffset, paint); yOffset += lineHeight
+                    }
+                    if (item.tdsDeductedAmount > 0) {
+                        canvas.drawText("TDS Sec 194Q: -${inrFormat.format(item.tdsDeductedAmount)}", leftX, yOffset, paint); yOffset += lineHeight
+                    }
+
+                    yOffset += 8f
+                    canvas.drawLine(15f, yOffset, pageWidth - 15f, yOffset, paint)
+                    yOffset += 22f
+
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                    paint.textSize = 14f
-                    canvas.drawText("Net Pay: $netAmt", leftX, yOffset, paint)
-                    
-                    yOffset += 10f
-                    paint.textSize = 12f
-                    canvas.drawText("Status: ${item.paymentStatus}", leftX, yOffset, paint)
-                    
-                    yOffset += 40f
+                    paint.textSize = 13f
+                    canvas.drawText("Net Payable: $netAmt", leftX, yOffset, paint); yOffset += lineHeight
+                    paint.textSize = 11f
+                    canvas.drawText("Payment Mode: ${item.paymentMode} (${item.paymentStatus})", leftX, yOffset, paint); yOffset += lineHeight
+
+                    if (!item.utrOrChequeNo.isNullOrBlank()) {
+                        canvas.drawText("Cheque/UTR: ${item.utrOrChequeNo}", leftX, yOffset, paint); yOffset += lineHeight
+                    }
+
+                    yOffset += 25f
                     paint.textAlign = Paint.Align.CENTER
                     paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
-                    paint.textSize = 10f
+                    paint.textSize = 9.5f
                     canvas.drawText("Thank you for your business!", pageWidth / 2f, yOffset, paint)
-                    
+
                     doc.finishPage(page)
 
                     try {

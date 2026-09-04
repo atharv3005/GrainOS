@@ -3,16 +3,20 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.export.ComplianceDocumentUtil
 import com.example.data.gemini.GeminiAdvisorService
 import com.example.data.local.AppDatabase
+import com.example.data.model.AuditTrailEntity
 import com.example.data.model.CropType
+import com.example.data.model.DocumentSequenceEntity
 import com.example.data.model.ExpenseEntryEntity
 import com.example.data.model.FirmProfile
 import com.example.data.model.GodownEntity
+import com.example.data.model.InventoryMovementEntity
 import com.example.data.model.InventoryReconciliationEntity
 import com.example.data.model.IoTTelemetryEntity
 import com.example.data.model.OutboundDispatchEntity
+import com.example.data.model.PartyEntity
+import com.example.data.model.PaymentAllocationEntity
 import com.example.data.model.PaymentMode
 import com.example.data.model.PaymentStatus
 import com.example.data.model.ProcurementEntity
@@ -29,10 +33,12 @@ import com.example.security.SecureStorageManager
 import com.example.security.SecurityCheckUtil
 import com.example.domain.managers.InventoryManager
 import com.example.domain.managers.TransactionLedgerManager
+import com.example.domain.usecase.CreateDispatchRequest
+import com.example.domain.usecase.CreateProcurementRequest
+import com.example.domain.usecase.InsufficientStockException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,7 +49,7 @@ import kotlinx.coroutines.launch
 class GrainWmsViewModel(application: Application) : AndroidViewModel(application) {
     private val secureStorage = SecureStorageManager(application)
     private val database = AppDatabase.getDatabase(application, viewModelScope)
-    private val repository = GrainRepository(database)
+    val repository = GrainRepository(database)
     private val inventoryManager = InventoryManager(database.godownDao())
     val transactionManager = TransactionLedgerManager(repository, inventoryManager)
     private val geminiService = GeminiAdvisorService()
@@ -136,7 +142,7 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     private val _smartInsight = MutableStateFlow("Loading market insights...")
     val smartInsight: StateFlow<String> = _smartInsight.asStateFlow()
 
-    // 8. Reactive DB States (All off-main-thread via IO Dispatchers)
+    // 8. Reactive DB States
     val allProcurements: StateFlow<List<ProcurementEntity>> = repository.allProcurements
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -164,13 +170,31 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     val allLedgers: StateFlow<List<VendorLedgerEntity>> = repository.allLedgerEntries
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val allPdcs: StateFlow<List<VendorLedgerEntity>> = repository.allPdcs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val pendingPdcs: StateFlow<List<VendorLedgerEntity>> = repository.getPendingPdcs()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val allReconciliations: StateFlow<List<InventoryReconciliationEntity>> = repository.allReconciliations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // --- REAL-TIME LIVE INVENTORY SYNC (TRANSACTION LEDGER) ---
+    val allParties: StateFlow<List<PartyEntity>> = repository.allParties
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allDocumentSequences: StateFlow<List<DocumentSequenceEntity>> = repository.allDocumentSequences
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allInventoryMovements: StateFlow<List<InventoryMovementEntity>> = repository.allInventoryMovements
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allPaymentAllocations: StateFlow<List<PaymentAllocationEntity>> = repository.allPaymentAllocations
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allAuditTrails: StateFlow<List<AuditTrailEntity>> = repository.auditTrailRepository.allAuditTrailsFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // --- REAL-TIME LIVE INVENTORY SYNC ---
     val liveGodownStockLedger: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.combine(allProcurements, allDispatches, allGodowns) { procs, disps, godowns ->
         val stockMap = mutableMapOf<String, Double>()
         
@@ -182,15 +206,13 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
             return ref
         }
 
-        // Sum Inward Unloaded Weight
         procs.filter { it.status == ProcurementStatus.UNLOADED.name || it.status == ProcurementStatus.COMPLETED.name }
             .forEach { p ->
                 val gId = getGodownId(p.godownAssigned)
                 val current = stockMap.getOrDefault(gId, 0.0)
-                stockMap[gId] = current + (p.netWeightKg / 1000.0) // Convert kg to MT
+                stockMap[gId] = current + (p.netWeightKg / 1000.0)
             }
             
-        // Subtract Outward Dispatched Loaded Weight
         disps.filter { it.status != com.example.data.model.DispatchStatus.REJECTED.name }
             .forEach { d ->
                 val gId = getGodownId(d.godownSource)
@@ -206,11 +228,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     init {
         startSimulatedTelemetry()
         _activeCrop.value = _firmProfile.value.mainTargetCrop
-        // Startup check for matured Post-Dated Cheques (PDCs)
-        viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            checkAndClearMaturedPdcs()
-        }
     }
 
     fun setCrop(crop: CropType) {
@@ -232,7 +249,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
 
     fun injectTestTelemetryPulse() {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.emitSimulatedIoTPulse()
         }
     }
@@ -240,7 +256,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     private fun startSimulatedTelemetry() {
         telemetryJob?.cancel()
         telemetryJob = viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             while (isActive) {
                 delay(3500)
                 if (_isStreamingActive.value) {
@@ -252,7 +267,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
 
     fun checkGoogleDriveBackupStatus() {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             val lastSyncTime = secureStorage.getLong("last_drive_sync_time", 0L)
             val currentTime = System.currentTimeMillis()
             val hours48 = 48 * 60 * 60 * 1000L
@@ -264,13 +278,11 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     
     fun simulateGoogleDriveBackup() {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             secureStorage.saveLong("last_drive_sync_time", System.currentTimeMillis())
             _snackbarMessage.value = "✅ Database successfully backed up to Google Drive."
         }
     }
 
-    // --- Advanced Gate Entry ---
     fun submitAdvancedGateEntry(
         procurement: ProcurementEntity,
         targetGodownIdOrName: String? = null,
@@ -279,7 +291,7 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val assignedGodown = targetGodownIdOrName?.ifBlank { null } ?: procurement.godownAssigned
             val updatedProc = procurement.copy(godownAssigned = assignedGodown)
-            repository.insertProcurement(updatedProc)
+            repository.updateProcurement(updatedProc)
             repository.recordStorageIntake(
                 storageFacilityNameOrId = assignedGodown,
                 procurement = updatedProc,
@@ -297,7 +309,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // Dynamic Onboarding & Setup
     fun completeOnboarding(
         firmName: String,
         capacityMt: Double,
@@ -349,8 +360,7 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-                repository.setupDynamicGodowns(godownEntities)
+                repository.insertGodowns(godownEntities)
             }
         }
 
@@ -386,10 +396,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         enableTds194q: Boolean = false,
         ratePerQuintal: Double = cropType.standardMsp,
         godownAssigned: String = "Godown A",
+        partyId: Long? = null,
         onComplete: (Long) -> Unit = {}
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             val id = repository.registerInboundLot(
                 farmerName = farmerName,
                 mobileNumber = mobileNumber,
@@ -401,8 +411,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 applyMandiCess = applyMandiCess,
                 enableTds194q = enableTds194q,
                 ratePerQuintal = ratePerQuintal,
-                godownAssigned = godownAssigned
+                godownAssigned = godownAssigned,
+                partyId = partyId
             )
+            _snackbarMessage.value = "Inbound token generated!"
             onComplete(id)
         }
     }
@@ -414,12 +426,12 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         showEntryAlert: Boolean = false
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             val updated = repository.recordGrossWeight(procurementId, grossWeightKg, weightMethod)
             if (showEntryAlert && updated != null) {
                 _selectedWhatsAppReceipt.value = updated
                 _isWhatsAppEntryOnly.value = true
             }
+            _snackbarMessage.value = "Gross weight logged (${grossWeightKg.toInt()} kg)"
         }
     }
 
@@ -430,15 +442,15 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         manualFarmerRate: Double? = null
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.recordMoistureAndGrading(procurementId, moisturePercentage, godownAssigned, manualFarmerRate)
+            _snackbarMessage.value = "Moisture logged ($moisturePercentage%) & Silo assigned."
         }
     }
 
     fun confirmUnloading(procurementId: Long) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.confirmUnloading(procurementId)
+            _snackbarMessage.value = "Unloading confirmed at silo bay."
         }
     }
 
@@ -456,7 +468,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         showReceiptAlert: Boolean = true
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             val updated = repository.recordTareWeightAndComplete(
                 procurementId = procurementId,
                 tareWeightKg = tareWeightKg,
@@ -473,6 +484,7 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 _selectedWhatsAppReceipt.value = updated
                 _isWhatsAppEntryOnly.value = false
             }
+            _snackbarMessage.value = "Procurement complete! Bill & inventory posted."
         }
     }
 
@@ -488,7 +500,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         notes: String = ""
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.reconcileInventoryShrinkage(
                 godownId = godownId,
                 cropType = cropType,
@@ -507,72 +518,45 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     // --- OUTBOUND DISPATCH & ACTUAL P&L SETTLEMENT ---
     private val _isSubmittingDispatch = MutableStateFlow(false)
     val isSubmittingDispatch: StateFlow<Boolean> = _isSubmittingDispatch.asStateFlow()
-    
-    private var lastDispatchTimestamp: Long = 0L
-    private var lastDispatchSignature: String = ""
 
     fun createOutboundDispatch(
         buyerName: String,
         destination: String,
         vehicleNumber: String,
-        driverName: String = "",
-        driverMobileNumber: String = "",
         cropType: String,
         godownSource: String,
         tareWeightKg: Double,
         grossWeightKg: Double,
         ratePerQuintal: Double,
+        buyerPartyId: Long? = null,
         onComplete: (Long) -> Unit = {}
     ) {
-        val currentSignature = "${buyerName}_${vehicleNumber}_${grossWeightKg}"
-        val now = System.currentTimeMillis()
-
-        if (_isSubmittingDispatch.value) {
-            _snackbarMessage.value = "Processing, please wait..."
-            return
-        }
-
-        if (now - lastDispatchTimestamp < 5000 && lastDispatchSignature == currentSignature) {
-            _snackbarMessage.value = "Duplicate entry detected. Please wait."
-            return
-        }
-
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             _isSubmittingDispatch.value = true
             try {
-                // 1. Inventory Safety Validation (Crucial Logic)
-                val godownFlow = allGodowns.value
-                val selectedGodown = godownFlow.find { it.godownId == godownSource }
-                val dispatchNetWeight = (grossWeightKg - tareWeightKg).coerceAtLeast(0.0)
-
-                if (selectedGodown != null && (dispatchNetWeight / 1000.0) > selectedGodown.currentStockMt) {
-                    _snackbarMessage.value = "ERROR: Insufficient stock in selected silo."
-                    return@launch
-                }
-                
-                val id = repository.createOutboundDispatch(
-                    buyerName = buyerName,
+                val crop = CropType.entries.find { it.name == cropType } ?: CropType.MAIZE
+                val request = CreateDispatchRequest(
+                    buyerPartyId = buyerPartyId,
+                    buyerNameQuick = buyerName,
                     destination = destination,
                     vehicleNumber = vehicleNumber,
-                    
-                    
-                    cropType = cropType,
+                    cropType = crop,
                     godownSource = godownSource,
                     tareWeightKg = tareWeightKg,
                     grossWeightKg = grossWeightKg,
-                    ratePerQuintal = ratePerQuintal,
-                    onComplete = onComplete
+                    ratePerQuintal = ratePerQuintal
                 )
-                
-                val dispatch = repository.getDispatchById(id)
-                if (dispatch != null) {
-                    transactionManager.recordDispatch(dispatch)
+                val result = repository.createDispatchUseCase(request)
+                result.onSuccess { saved ->
+                    _snackbarMessage.value = "Truck dispatched! Stock depleted via FIFO."
+                    onComplete(saved.id)
+                }.onFailure { ex ->
+                    if (ex is InsufficientStockException) {
+                        _snackbarMessage.value = "⚠️ STOCK BLOCKED: ${ex.message}"
+                    } else {
+                        _snackbarMessage.value = "Dispatch Error: ${ex.message}"
+                    }
                 }
-                
-                lastDispatchTimestamp = System.currentTimeMillis()
-                lastDispatchSignature = currentSignature
-                _snackbarMessage.value = "Truck dispatched! Stock depleted via FIFO."
             } finally {
                 _isSubmittingDispatch.value = false
             }
@@ -601,7 +585,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         brokerageRatePerQtl: Double
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.settleUnloadedDispatch(
                 dispatchId = dispatchId,
                 companyUnloadedWeightKg = companyUnloadedWeightKg,
@@ -630,10 +613,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         paidToOrParty: String,
         paymentMode: String = "CASH",
         utrOrChequeNo: String = "",
-        notes: String = ""
+        notes: String = "",
+        partyId: Long? = null
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.recordManualExpense(
                 truckOrBatchRef = truckOrBatchRef,
                 cropType = cropType,
@@ -645,24 +628,18 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 paidToOrParty = paidToOrParty,
                 paymentMode = paymentMode,
                 utrOrChequeNo = utrOrChequeNo,
-                notes = notes
+                notes = notes,
+                partyId = partyId
             )
             _showExpenseEntryDialog.value = false
             _snackbarMessage.value = "Transaction expense recorded & posted to vendor ledger."
         }
     }
 
-    fun deleteExpense(expense: ExpenseEntryEntity) {
+    fun deleteExpense(expenseId: Long, reason: String = "User deletion") {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            repository.deleteExpense(expense)
-        }
-    }
-
-    fun deleteExpense(expenseId: Long) {
-        viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            repository.deleteExpenseById(expenseId)
+            repository.deleteExpenseById(expenseId, reason)
+            _snackbarMessage.value = "Expense record deleted & audited."
         }
     }
 
@@ -700,7 +677,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         notes: String = ""
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.recordTruckRejection(
                 truckNumber = truckNumber,
                 buyerOrCompany = buyerOrCompany,
@@ -720,10 +696,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun deleteTruckRejection(id: Long) {
+    fun deleteTruckRejection(id: Long, reason: String = "User deletion") {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            repository.deleteTruckRejection(id)
+            repository.deleteTruckRejection(id, reason)
+            _snackbarMessage.value = "Rejection record deleted & audited."
         }
     }
 
@@ -732,7 +708,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         val bookStockMt = liveGodownStockLedger.value[godownId] ?: return 0.0
         if (bookStockMt <= 0) return 0.0
 
-        // FIFO matching to find remaining stock
         val procs = allProcurements.value
             .filter { (it.status == ProcurementStatus.UNLOADED.name || it.status == ProcurementStatus.COMPLETED.name) && it.godownAssigned == godownId }
             .sortedBy { it.completedTimestamp.takeIf { t -> t > 0 } ?: it.createdAt }
@@ -748,12 +723,11 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
             val inwardMt = p.netWeightKg / 1000.0
             if (totalDispatched >= inwardMt) {
                 totalDispatched -= inwardMt
-                continue // This batch is completely gone
+                continue
             }
             
-            // Remaining portion of this batch
             val remainingMt = inwardMt - totalDispatched
-            totalDispatched = 0.0 // All dispatch accounted for
+            totalDispatched = 0.0
             
             val inwardDate = p.completedTimestamp.takeIf { it > 0 } ?: p.createdAt
             val weeksStored = ((now - inwardDate) / (1000.0 * 60 * 60 * 24 * 7)).coerceAtLeast(0.0)
@@ -767,7 +741,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 shrinkPct = ((initialMoisture - currentEstimatedMoisture) / (100.0 - currentEstimatedMoisture)) * 100.0
             }
             
-            // Standard 0.5% Handling Loss
             val totalLossPct = shrinkPct + 0.5
             val lossMt = remainingMt * (totalLossPct / 100.0)
             totalEstimatedShrinkMt += lossMt
@@ -776,67 +749,8 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         return (bookStockMt - totalEstimatedShrinkMt).coerceAtLeast(0.0)
     }
 
-    fun endOfSeasonZeroOut(godownId: String) {
-        val bookStockMt = liveGodownStockLedger.value[godownId] ?: 0.0
-        if (bookStockMt > 0) {
-            viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-                // Log the final realized moisture/handling loss to empty out the book stock
-                repository.createOutboundDispatch(
-                    buyerName = "SYSTEM_AUDIT",
-                    destination = "END_OF_SEASON_WRITE_OFF",
-                    vehicleNumber = "AUDIT",
-                    cropType = _activeCrop.value.name,
-                    godownSource = godownId,
-                    tareWeightKg = 0.0,
-                    grossWeightKg = bookStockMt * 1000.0, // This will deduct the remaining balance completely
-                    ratePerQuintal = 0.0
-                ) {
-                    _snackbarMessage.value = "End of Season Audit Complete: $bookStockMt MT written off as final handling/moisture loss."
-                }
-            }
-        }
-    }
-    fun receiveCorporatePayment(amount: Double, source: String, notes: String) {
-        viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            repository.insertLedgerEntry(
-                VendorLedgerEntity(
-                    vendorType = VendorType.CORPORATE.name,
-                    vendorName = source,
-                    transactionType = TransactionType.PAYMENT_RECEIVED.name,
-                    amount = amount,
-                    notes = notes
-                )
-            )
-            _snackbarMessage.value = "Payment received successfully."
-        }
-    }
-
-    fun logInterestExpense(amount: Double, notes: String) {
-        viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            repository.insertExpenseEntry(
-                ExpenseEntryEntity(
-                    expenseNo = "INT-${System.currentTimeMillis() % 10000}",
-                    truckOrBatchRef = "LOAN",
-                    cropType = _activeCrop.value.name,
-                    laborCost = 0.0,
-                    bagsCost = 0.0,
-                    transportCost = 0.0,
-                    miscCost = amount,
-                    miscDescription = "Capital Loan Interest",
-                    paidToOrParty = "Bank/Financier",
-                    notes = notes
-                )
-            )
-            _snackbarMessage.value = "Interest expense logged. Liquid assets reduced."
-        }
-    }
-
     fun exportCaReportToExcel(context: android.content.Context) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             try {
                 val ledgers = allLedgers.value
                 val success = com.example.data.export.ExcelExportHelper.exportAnnualLedgerToExcel(context, ledgers)
@@ -847,16 +761,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 }
             } catch (e: Exception) {
                 _snackbarMessage.value = "Export error: ${e.message}"
-            }
-        }
-    }
-
-    fun checkAndClearMaturedPdcs() {
-        viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            val cleared = repository.checkAndClearMaturedPdcs()
-            if (cleared.isNotEmpty()) {
-                _snackbarMessage.value = "${cleared.size} Post-Dated Cheque(s) matured and auto-cleared."
             }
         }
     }
@@ -872,10 +776,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         bagCostPerQuintal: Double = _firmProfile.value.bagCostPerQuintal,
         transportPerQuintal: Double = _firmProfile.value.transportPerQuintal,
         brokeragePerQuintal: Double = _firmProfile.value.brokeragePerQuintal,
-        notes: String = ""
+        notes: String = "",
+        buyerPartyId: Long? = null
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             repository.bookTrade(
                 cropType = cropType,
                 brokerOrBuyerName = brokerOrBuyerName,
@@ -886,7 +790,8 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
                 bagCostPerQuintal = bagCostPerQuintal,
                 transportPerQuintal = transportPerQuintal,
                 brokeragePerQuintal = brokeragePerQuintal,
-                notes = notes
+                notes = notes,
+                buyerPartyId = buyerPartyId
             )
             _showTradeBookingDialog.value = false
             _snackbarMessage.value = "Trade contract locked."
@@ -895,17 +800,20 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateTradeStatus(tradeId: Long, newStatus: String) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.updateTradeStatus(tradeId, newStatus) }
+            repository.updateTradeStatus(tradeId, newStatus)
+        }
     }
 
-    fun deleteTrade(tradeId: Long) {
+    fun deleteTrade(tradeId: Long, reason: String = "User deletion") {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.deleteTrade(tradeId) }
+            repository.deleteTrade(tradeId, reason)
+        }
     }
 
     fun updatePaymentStatus(procurementId: Long, newStatus: PaymentStatus) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.updatePaymentStatus(procurementId, newStatus) }
+            repository.updatePaymentStatus(procurementId, newStatus)
+        }
     }
 
     // --- GEMINI PRO ADVISOR ---
@@ -917,7 +825,6 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
         farmerName: String
     ) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
             _isAiLoading.value = true
             val response = geminiService.analyzeGrainLot(
                 crop = crop,
@@ -970,10 +877,10 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
     fun openPdfReceipt(procurement: ProcurementEntity) { _selectedPdfReceipt.value = procurement }
     fun closePdfReceipt() { _selectedPdfReceipt.value = null }
 
-    fun deleteProcurement(id: Long) {
+    fun deleteProcurement(id: Long, reason: String = "User deletion") {
         viewModelScope.launch {
-            repository.deleteProcurement(id)
-            _snackbarMessage.value = "Procurement record deleted successfully"
+            repository.deleteProcurement(id, reason)
+            _snackbarMessage.value = "Procurement record deleted & audited."
         }
     }
 
@@ -990,78 +897,118 @@ class GrainWmsViewModel(application: Application) : AndroidViewModel(application
 
     fun updateProcurement(procurement: ProcurementEntity) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.updateProcurement(procurement) }
+            repository.updateProcurement(procurement)
+        }
     }
 
-    fun deleteDispatch(id: Long) {
+    fun deleteDispatch(id: Long, reason: String = "User deletion") {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.deleteDispatch(id) }
+            repository.deleteDispatch(id, reason)
+            _snackbarMessage.value = "Dispatch record deleted & audited."
+        }
     }
 
     fun updateDispatch(dispatch: OutboundDispatchEntity) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"; repository.updateDispatch(dispatch) }
+            repository.updateDispatch(dispatch)
+        }
     }
 
+    fun depositPdc(uuid: String) {
+        viewModelScope.launch {
+            repository.markPdcAsDepositedUseCase(uuid)
+                .onSuccess { _snackbarMessage.value = "PDC marked as DEPOSITED." }
+                .onFailure { _snackbarMessage.value = "Error: ${it.message}" }
+        }
+    }
+
+    fun presentPdc(uuid: String) {
+        viewModelScope.launch {
+            repository.markPdcAsPresentedUseCase(uuid)
+                .onSuccess { _snackbarMessage.value = "PDC presented for clearing." }
+                .onFailure { _snackbarMessage.value = "Error: ${it.message}" }
+        }
+    }
+
+    fun clearPdc(uuid: String) {
+        viewModelScope.launch {
+            repository.markPdcAsClearedUseCase(uuid)
+                .onSuccess { _snackbarMessage.value = "PDC cleared & liability settled!" }
+                .onFailure { _snackbarMessage.value = "Error: ${it.message}" }
+        }
+    }
+
+    fun bouncePdc(uuid: String, reason: String) {
+        viewModelScope.launch {
+            repository.markPdcAsBouncedUseCase(uuid, reason)
+                .onSuccess { _snackbarMessage.value = "PDC marked as BOUNCED. Payable debt reopened." }
+                .onFailure { _snackbarMessage.value = "Error: ${it.message}" }
+        }
+    }
+
+    fun closeDayEnd(financialYear: String = "26-27", facilityId: String = "MAIN") {
+        viewModelScope.launch {
+            repository.closeDayEndUseCase(financialYear, facilityId)
+                .onSuccess { _snackbarMessage.value = "Day-End Closing complete! Sequence numbers frozen." }
+                .onFailure { _snackbarMessage.value = "Day-End Error: ${it.message}" }
+        }
+    }
 
     fun refreshSmartInsight(procurements: List<ProcurementEntity>, godowns: List<GodownEntity>) {
         viewModelScope.launch {
-            _snackbarMessage.value = "Entry Saved Successfully!"
-            _smartInsight.value = "Analyzing market trends..."
-            try {
-                val totalStockMt = godowns.sumOf { it.currentStockMt }
-                
-                val validMoistureProcs = procurements.filter { it.moisturePercentage > 0 }
-                val avgMoisture = if (validMoistureProcs.isNotEmpty()) {
-                    validMoistureProcs.sumOf { it.moisturePercentage } / validMoistureProcs.size
-                } else {
-                    0.0
-                }
-                
-                val cropName = _activeCrop.value.name
-                val promptStr = "Current warehouse stock: ${String.format("%.1f", totalStockMt)} MT of $cropName at ${String.format("%.1f", avgMoisture)}% average moisture."
-                
-                val apiKey = com.example.BuildConfig.GEMINI_API_KEY
-                if (apiKey.isEmpty() || apiKey == "YOUR_API_KEY") {
-                    _smartInsight.value = "API Key missing. Simulation: Market demand for $cropName is steady. With moisture at ${String.format("%.1f", avgMoisture)}%, consider holding 60% of stock for 2 weeks to target better corporate rates."
-                    return@launch
-                }
+            val totalProcured = procurements.sumOf { it.netWeightKg } / 1000.0
+            val totalCapacity = godowns.sumOf { it.capacityMt }
+            val occupancy = if (totalCapacity > 0) (totalProcured / totalCapacity) * 100 else 0.0
+            _smartInsight.value = "Storage Occupancy: ${"%.1f".format(occupancy)}% • Total Stock: ${"%.1f".format(totalProcured)} MT across ${godowns.size} silos."
+        }
+    }
 
-                val generativeModel = com.google.ai.client.generativeai.GenerativeModel(
-                    modelName = "gemini-1.5-flash",
-                    apiKey = apiKey,
-                    systemInstruction = com.google.ai.client.generativeai.type.content { text("You are an expert Maharashtrian agricultural commodity advisor. Keep your answer under 3 sentences.") }
-                )
+    fun receiveCorporatePayment(amount: Double, source: String, notes: String) {
+        viewModelScope.launch {
+            repository.receiveCorporatePayment(amount, source, notes)
+            _snackbarMessage.value = "Corporate payment of ₹${"%,.0f".format(amount)} received from $source."
+        }
+    }
 
-                val response = generativeModel.generateContent(promptStr)
-                _smartInsight.value = response.text ?: "No insight generated."
-                
-            } catch (e: Exception) {
-                _smartInsight.value = "Failed to load insight: ${e.message}"
-            }
+    fun logInterestExpense(amount: Double, notes: String) {
+        viewModelScope.launch {
+            repository.logInterestExpense(amount, notes)
+            _snackbarMessage.value = "Bank interest expense of ₹${"%,.0f".format(amount)} recorded."
+        }
+    }
+
+    fun endOfSeasonZeroOut(godownId: String) {
+        viewModelScope.launch {
+            repository.endOfSeasonZeroOut(godownId)
+            _snackbarMessage.value = "End of season zero-out audit recorded for $godownId."
         }
     }
 
     fun addStorageFacilities(facilities: List<Pair<String, Double>>) {
         viewModelScope.launch {
-            if (facilities.isNotEmpty()) {
-                val mainCrop = _activeCrop.value
-                val existingGodowns = repository.getGodownsList()
-                val offset = existingGodowns.size
-                
-                val godownEntities = facilities.mapIndexed { idx, fac ->
-                    val idStr = "GODOWN_${System.currentTimeMillis()}_${idx}"
-                    GodownEntity(
-                        godownId = idStr,
-                        displayName = fac.first.ifBlank { "Storage Facility ${offset + idx + 1}" },
-                        capacityMt = fac.second.coerceAtLeast(50.0),
-                        currentStockMt = 0.0,
-                        activeCrop = mainCrop.name,
-                        lastUpdated = System.currentTimeMillis()
-                    )
-                }
-                repository.insertGodowns(godownEntities)
+            val entities = facilities.mapIndexed { idx, fac ->
+                val idStr = "GODOWN_${(idx + 65).toChar()}"
+                GodownEntity(
+                    godownId = idStr,
+                    displayName = fac.first.ifBlank { "Storage Facility ${idx + 1}" },
+                    capacityMt = fac.second.coerceAtLeast(50.0),
+                    currentStockMt = 0.0,
+                    activeCrop = _activeCrop.value.name,
+                    averageMoisture = _activeCrop.value.idealMoisture,
+                    temperatureCelsius = 24.0,
+                    baseCostPerQuintal = _activeCrop.value.standardMsp,
+                    adjustedAvgCostPerQuintal = _activeCrop.value.standardMsp
+                )
             }
+            repository.insertGodowns(entities)
+            _snackbarMessage.value = "${facilities.size} Storage facilities added."
+        }
+    }
+
+    fun deleteExpense(id: Long) {
+        viewModelScope.launch {
+            repository.deleteExpenseById(id)
+            _snackbarMessage.value = "Expense record deleted."
         }
     }
 }

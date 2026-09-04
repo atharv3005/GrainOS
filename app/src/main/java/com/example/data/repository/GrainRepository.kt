@@ -3,14 +3,19 @@ package com.example.data.repository
 import com.example.data.local.AppDatabase
 import com.example.data.model.CropType
 import com.example.data.model.DispatchStatus
+import com.example.data.model.DocumentSequenceEntity
+import com.example.data.model.DocumentType
 import com.example.data.model.ExpenseEntryEntity
 import com.example.data.model.GodownEntity
+import com.example.data.model.InventoryMovementEntity
 import com.example.data.model.InventoryReconciliationEntity
 import com.example.data.model.IoTTelemetryEntity
 import com.example.data.model.OutboundDispatchEntity
-import com.example.data.model.PdcStatus
+import com.example.data.model.PartyEntity
+import com.example.data.model.PaymentAllocationEntity
 import com.example.data.model.PaymentMode
 import com.example.data.model.PaymentStatus
+import com.example.data.model.PdcStatus
 import com.example.data.model.ProcurementEntity
 import com.example.data.model.ProcurementStatus
 import com.example.data.model.QualityGrade
@@ -18,11 +23,26 @@ import com.example.data.model.StorageFacilityIntakeEntity
 import com.example.data.model.TradeBookingEntity
 import com.example.data.model.TruckRejectionEntity
 import com.example.data.model.VendorLedgerEntity
+import com.example.domain.usecase.AllocatePaymentRequest
+import com.example.domain.usecase.AllocatePaymentUseCase
+import com.example.domain.usecase.ApmcTaxCalculator
+import com.example.domain.usecase.CloseDayEndUseCase
+import com.example.domain.usecase.CreateDispatchRequest
+import com.example.domain.usecase.CreateDispatchUseCase
+import com.example.domain.usecase.CreateProcurementRequest
+import com.example.domain.usecase.CreateProcurementUseCase
+import com.example.domain.usecase.DayEndReport
+import com.example.domain.usecase.GenerateDocumentNumberUseCase
+import com.example.domain.usecase.MarkPdcAsBouncedUseCase
+import com.example.domain.usecase.MarkPdcAsClearedUseCase
+import com.example.domain.usecase.MarkPdcAsDepositedUseCase
+import com.example.domain.usecase.MarkPdcAsPresentedUseCase
+import com.example.domain.usecase.PostInventoryMovementUseCase
+import com.example.domain.usecase.TdsCalculator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
-import kotlin.random.Random
 
 class GrainRepository(private val db: AppDatabase) {
     private val procurementDao = db.procurementDao()
@@ -35,7 +55,47 @@ class GrainRepository(private val db: AppDatabase) {
     private val truckRejectionDao = db.truckRejectionDao()
     private val vendorLedgerDao = db.vendorLedgerDao()
     private val inventoryReconciliationDao = db.inventoryReconciliationDao()
+    private val partyDao = db.partyDao()
+    private val documentSequenceDao = db.documentSequenceDao()
+    private val auditTrailDao = db.auditTrailDao()
+    private val inventoryMovementDao = db.inventoryMovementDao()
+    private val paymentAllocationDao = db.paymentAllocationDao()
 
+    // Sub-repositories
+    val partyRepository = PartyRepository(partyDao)
+    val documentSequenceRepository = DocumentSequenceRepository(documentSequenceDao)
+    val auditTrailRepository = AuditTrailRepository(auditTrailDao)
+    val inventoryMovementRepository = InventoryMovementRepository(inventoryMovementDao)
+    val paymentAllocationRepository = PaymentAllocationRepository(paymentAllocationDao)
+
+    // Domain Use Cases
+    val apmcCalculator = ApmcTaxCalculator()
+    val tdsCalculator = TdsCalculator()
+    val generateDocNumber = GenerateDocumentNumberUseCase(documentSequenceRepository)
+    val postMovement = PostInventoryMovementUseCase(inventoryMovementRepository, auditTrailRepository)
+    val createProcurementUseCase = CreateProcurementUseCase(
+        procurementDao, godownDao, vendorLedgerDao, partyRepository,
+        generateDocNumber, postMovement, auditTrailRepository, apmcCalculator, tdsCalculator, db
+    )
+    val createDispatchUseCase = CreateDispatchUseCase(
+        dispatchDao, godownDao, vendorLedgerDao, partyRepository,
+        generateDocNumber, postMovement, auditTrailRepository, db
+    )
+    val allocatePaymentUseCase = AllocatePaymentUseCase(paymentAllocationRepository, auditTrailRepository)
+    val markPdcAsDepositedUseCase = MarkPdcAsDepositedUseCase(vendorLedgerDao, auditTrailRepository)
+    val markPdcAsPresentedUseCase = MarkPdcAsPresentedUseCase(vendorLedgerDao, auditTrailRepository)
+    val markPdcAsClearedUseCase = MarkPdcAsClearedUseCase(vendorLedgerDao, procurementDao, auditTrailRepository)
+    val markPdcAsBouncedUseCase = MarkPdcAsBouncedUseCase(vendorLedgerDao, procurementDao, auditTrailRepository)
+    val closeDayEndUseCase = CloseDayEndUseCase(procurementDao, dispatchDao, godownDao, documentSequenceRepository, auditTrailRepository)
+
+    // Phase 2 & Phase 3 Managers & Engines
+    val dataMigrationManager = com.example.data.local.DataMigrationManager(db)
+    val approvalWorkflowEngine = com.example.domain.usecase.ApprovalWorkflowEngine(db.approvalDao(), db.userDao())
+    val cashDrawerManager = com.example.domain.managers.CashDrawerReconciliationManager(db.cashDrawerDao(), db.procurementDao(), db.expenseDao(), db.vendorLedgerDao())
+    val postJournalEntryUseCase = com.example.domain.usecase.PostJournalEntryUseCase(db.generalLedgerDao())
+    val stressTestRunner = com.example.domain.managers.StressTestRunner(db)
+
+    // Flow Streams
     val allProcurements: Flow<List<ProcurementEntity>> = procurementDao.getAllProcurements()
     val allGodowns: Flow<List<GodownEntity>> = godownDao.getAllGodowns()
     val allStorageIntakes: Flow<List<StorageFacilityIntakeEntity>> = storageIntakeDao.getAllIntakes()
@@ -45,18 +105,23 @@ class GrainRepository(private val db: AppDatabase) {
     val allExpenses: Flow<List<ExpenseEntryEntity>> = expenseDao.getAllExpenses()
     val allRejections: Flow<List<TruckRejectionEntity>> = truckRejectionDao.getAllRejections()
     val allLedgerEntries: Flow<List<VendorLedgerEntity>> = vendorLedgerDao.getAllLedgerEntries()
+    val allPdcs: Flow<List<VendorLedgerEntity>> = vendorLedgerDao.getAllPdcsFlow()
     val allReconciliations: Flow<List<InventoryReconciliationEntity>> = inventoryReconciliationDao.getAllReconciliations()
+    val allParties: Flow<List<PartyEntity>> = partyRepository.allPartiesFlow
+    val allDocumentSequences: Flow<List<DocumentSequenceEntity>> = documentSequenceRepository.allSequencesFlow
+    val allInventoryMovements: Flow<List<InventoryMovementEntity>> = inventoryMovementRepository.allMovementsFlow
+    val allPaymentAllocations: Flow<List<PaymentAllocationEntity>> = paymentAllocationRepository.allAllocationsFlow
+    val allUsers: Flow<List<com.example.security.UserEntity>> = db.userDao().getAllUsersFlow()
+    val allApprovals: Flow<List<com.example.data.model.ApprovalRequestEntity>> = db.approvalDao().getAllApprovalsFlow()
+    val allGeneralLedger: Flow<List<com.example.data.model.GeneralLedgerEntity>> = db.generalLedgerDao().getAllEntriesFlow()
+    val allOrganizations: Flow<List<com.example.data.model.OrganizationEntity>> = db.organizationDao().getAllOrganizationsFlow()
 
     fun getLedgerEntriesByType(vendorType: String): Flow<List<VendorLedgerEntity>> =
         vendorLedgerDao.getLedgerEntriesByType(vendorType)
 
-    fun getPendingPdcs(): Flow<List<VendorLedgerEntity>> = vendorLedgerDao.getPendingPdcs()
+    fun getPendingPdcs(): Flow<List<VendorLedgerEntity>> = vendorLedgerDao.getActivePdcsFlow()
 
-    // 1. Inbound Procurement Registration
-    suspend fun insertProcurement(procurement: ProcurementEntity) = withContext(Dispatchers.IO) {
-        procurementDao.insertProcurement(procurement)
-    }
-
+    // 1. Inbound Procurement Registration (Sequential Document Numbering)
     suspend fun registerInboundLot(
         farmerName: String,
         mobileNumber: String,
@@ -68,19 +133,31 @@ class GrainRepository(private val db: AppDatabase) {
         applyMandiCess: Boolean = false,
         enableTds194q: Boolean = false,
         ratePerQuintal: Double = cropType.standardMsp,
-        godownAssigned: String = "Godown A"
+        godownAssigned: String = "Godown A",
+        partyId: Long? = null
     ): Long = withContext(Dispatchers.IO) {
-        val token = "TK-${Random.nextInt(1000, 9999)}"
-        
-        // Calculate cumulative purchases for TDS 194Q compliance check
+        val token = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = "MAIN",
+            documentType = DocumentType.GIN
+        )
+
         val cumulativePurchases = if (enableTds194q) {
-            procurementDao.getCumulativeFarmerGross(farmerName.trim()) ?: 0.0
+            if (partyId != null) {
+                partyRepository.getById(partyId)?.cumulativePurchasesInFy ?: 0.0
+            } else {
+                procurementDao.getCumulativeFarmerGross(farmerName.trim()) ?: 0.0
+            }
         } else {
             0.0
         }
 
         val procurement = ProcurementEntity(
             tokenNo = token,
+            partyId = partyId,
+            farmerNameQuick = if (partyId == null) farmerName.trim() else null,
+            mobileQuick = if (partyId == null) mobileNumber.trim() else null,
+            villageQuick = if (partyId == null) village.trim() else null,
             farmerName = farmerName.trim(),
             mobileNumber = mobileNumber.trim(),
             village = village.trim(),
@@ -98,6 +175,14 @@ class GrainRepository(private val db: AppDatabase) {
             createdAt = System.currentTimeMillis()
         )
         val id = procurementDao.insertProcurement(procurement)
+
+        // Audit Trail
+        auditTrailRepository.logCreate(
+            entityType = "PROCUREMENT",
+            entityId = token,
+            newStateJson = "{\"token\":\"$token\",\"farmer\":\"${procurement.farmerName}\",\"vehicle\":\"${procurement.vehicleNumber}\"}",
+            reason = "Registered inbound lot at gate"
+        )
 
         // Telemetry Event
         telemetryDao.insertTelemetry(
@@ -144,7 +229,7 @@ class GrainRepository(private val db: AppDatabase) {
         updated
     }
 
-    // 3. Moisture Testing & Grading with Manual Negotiated Farmer Rate Support
+    // 3. Moisture Testing & Grading
     suspend fun recordMoistureAndGrading(
         procurementId: Long,
         moisturePct: Double,
@@ -200,7 +285,7 @@ class GrainRepository(private val db: AppDatabase) {
         updated
     }
 
-    // 5. Tare Weight & Complete Procurement (with Maharashtra APMC Cess + TDS 194Q Math & Immediate Godown Stock Increment)
+    // 5. Tare Weight & Complete Procurement (with APMC Cess + TDS 194Q + Inventory Movement)
     suspend fun recordTareWeightAndComplete(
         procurementId: Long,
         tareWeightKg: Double,
@@ -226,44 +311,25 @@ class GrainRepository(private val db: AppDatabase) {
         }
         val grossBill = quintals * effectiveRate
 
-        // Maharashtra APMC Cess: 1.0% Market Fee + 0.5% Supervisory Charge = 1.5%
-        var marketFee = 0.0
-        var supervisoryCharge = 0.0
-        var totalCess = 0.0
-        if (item.applyMandiCess) {
-            marketFee = grossBill * 0.01 // 1.0%
-            supervisoryCharge = grossBill * 0.005 // 0.5%
-            totalCess = marketFee + supervisoryCharge // 1.5%
+        // APMC Cess
+        val cessResult = apmcCalculator.calculate(grossBill, item.applyMandiCess)
+
+        // TDS 194Q
+        val prevPurchases = if (item.partyId != null) {
+            partyRepository.getById(item.partyId)?.cumulativePurchasesInFy ?: 0.0
+        } else {
+            procurementDao.getCumulativeFarmerGross(item.farmerName) ?: 0.0
         }
+        val hasPan = item.isPanVerified || (item.panNumber.isNotBlank() && item.panNumber.length == 10)
+        val tdsResult = tdsCalculator.calculate(
+            currentBillAmount = grossBill,
+            cumulativePurchasesInFy = prevPurchases,
+            enableTds194q = item.enableTds194q,
+            hasValidPan = hasPan
+        )
 
-        // Section 194Q TDS: 0.1% on excess over ₹50 Lakhs (or 5.0% if no verified PAN)
-        var tdsApplicable = false
-        var tdsRate = 0.0
-        var tdsAmount = 0.0
-        var tcsExempt = false
-
-        if (item.enableTds194q) {
-            val prevPurchases = procurementDao.getCumulativeFarmerGross(item.farmerName) ?: 0.0
-            val newTotal = prevPurchases + grossBill
-            val threshold = 5000000.0 // ₹50 Lakhs
-
-            if (newTotal > threshold) {
-                tdsApplicable = true
-                tcsExempt = true // Flags deduction so seller doesn't charge TCS 206C(1H)
-                val hasPan = item.isPanVerified || (item.panNumber.isNotBlank() && item.panNumber.length == 10)
-                tdsRate = if (hasPan) 0.001 else 0.05 // 0.1% with PAN, 5.0% without
-
-                val taxableExcess = if (prevPurchases >= threshold) {
-                    grossBill
-                } else {
-                    newTotal - threshold
-                }
-                tdsAmount = (taxableExcess * tdsRate).coerceAtLeast(0.0)
-            }
-        }
-
-        // Final Net Payable to Farmer
-        val netPayable = (grossBill - totalCess - tdsAmount).coerceAtLeast(0.0)
+        // Final Net Payable
+        val netPayable = (grossBill - cessResult.totalCess - tdsResult.tdsDeductedAmount).coerceAtLeast(0.0)
 
         val updated = item.copy(
             tareWeightKg = tareWeightKg,
@@ -272,13 +338,13 @@ class GrainRepository(private val db: AppDatabase) {
             bagWeightKg = bagWeightKg,
             ratePerQuintal = effectiveRate,
             grossBillAmount = grossBill,
-            mandiMarketFee = marketFee,
-            mandiSupervisoryCharge = supervisoryCharge,
-            totalMandiCess = totalCess,
-            isTdsApplicable = tdsApplicable,
-            tdsRate = tdsRate,
-            tdsDeductedAmount = tdsAmount,
-            isTcsExempt = tcsExempt,
+            mandiMarketFee = cessResult.marketFee,
+            mandiSupervisoryCharge = cessResult.supervisoryCharge,
+            totalMandiCess = cessResult.totalCess,
+            isTdsApplicable = tdsResult.isTdsApplicable,
+            tdsRate = tdsResult.tdsRate,
+            tdsDeductedAmount = tdsResult.tdsDeductedAmount,
+            isTcsExempt = tdsResult.isTcsExempt,
             totalAmount = netPayable,
             paymentMode = paymentMode,
             utrOrChequeNo = utrOrChequeNo,
@@ -294,15 +360,34 @@ class GrainRepository(private val db: AppDatabase) {
         )
         procurementDao.updateProcurement(updated)
 
-        // Increment Godown Stock and Store Grain Lot in Storage Facility Database
+        // Post Inventory Movement
+        postMovement(
+            movementType = com.example.data.model.InventoryMovementType.RECEIPT,
+            sourceEntityType = "PROCUREMENT",
+            sourceEntityUuid = updated.uuid,
+            facilityId = updated.godownAssigned,
+            cropType = updated.cropType,
+            quantityKg = updated.netWeightKg,
+            costPerQuintalPaise = (effectiveRate * 100).toLong(),
+            totalValuePaise = (netPayable * 100).toLong(),
+            reason = "Procurement ${updated.tokenNo}"
+        )
+
+        // Update Party Cumulative Purchases
+        item.partyId?.let { pId ->
+            partyRepository.updateCumulativePurchases(pId, grossBill)
+        }
+
+        // Storage Intake Entry
         recordStorageIntake(
             storageFacilityNameOrId = item.godownAssigned,
             procurement = updated
         )
 
-        // Add to Farmer Vendor Ledger
+        // Vendor Ledger Entry
         vendorLedgerDao.insertLedgerEntry(
             VendorLedgerEntity(
+                partyId = item.partyId,
                 vendorType = "FARMER",
                 vendorName = item.farmerName,
                 contactNumber = item.mobileNumber,
@@ -312,15 +397,16 @@ class GrainRepository(private val db: AppDatabase) {
                 paymentMode = paymentMode,
                 utrOrChequeNo = utrOrChequeNo,
                 chequeMaturityDate = if (isPdc) chequeMaturityDate else 0L,
-                pdcStatus = if (isPdc) PdcStatus.PENDING_MATURITY.name else PdcStatus.CLEARED.name,
+                pdcStatus = if (isPdc) PdcStatus.ISSUED.name else PdcStatus.NONE.name,
                 referenceDocNo = item.tokenNo,
-                notes = "Procurement: Net ${netKg}kg (${quintals}Q) of ${item.cropType} @ ₹$effectiveRate/Qtl. TDS: ₹$tdsAmount, Cess: ₹$totalCess"
+                runningBalance = if (isPdc) netPayable else 0.0,
+                notes = "Procurement: Net ${netKg}kg (${quintals}Q) of ${item.cropType} @ ₹$effectiveRate/Qtl. TDS: ₹${tdsResult.tdsDeductedAmount}, Cess: ₹${cessResult.totalCess}"
             )
         )
         updated
     }
 
-    // 6. Inventory Reconciliation & Moisture Shrinkage Capitalization
+    // 6. Inventory Reconciliation & Moisture Shrinkage
     suspend fun reconcileInventoryShrinkage(
         godownId: String,
         cropType: String,
@@ -336,13 +422,18 @@ class GrainRepository(private val db: AppDatabase) {
         val baseCostPerKg = baseCostPerQuintal / 100.0
         val totalLossCapitalized = lostKg * baseCostPerKg
 
-        // Redistribute total loss over remaining audited stock
         val capitalizedPerRemainingKg = if (auditedStockKg > 0) totalLossCapitalized / auditedStockKg else 0.0
         val newAdjustedCostPerKg = baseCostPerKg + capitalizedPerRemainingKg
         val newAdjustedCostPerQuintal = newAdjustedCostPerKg * 100.0
 
+        val recNo = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = godownId,
+            documentType = DocumentType.REC
+        )
+
         val rec = InventoryReconciliationEntity(
-            reconciliationNo = "REC-${Random.nextInt(1000, 9999)}",
+            reconciliationNo = recNo,
             godownId = godownId,
             cropType = cropType,
             initialStockKg = initialStockKg,
@@ -360,7 +451,22 @@ class GrainRepository(private val db: AppDatabase) {
         )
         val recId = inventoryReconciliationDao.insertReconciliation(rec)
 
-        // Update Godown Entity with new Stock, Shrinkage & Adjusted Cost
+        // Post Inventory Loss Adjustment Movement
+        if (lostKg > 0) {
+            postMovement(
+                movementType = com.example.data.model.InventoryMovementType.SHRINKAGE,
+                sourceEntityType = "RECONCILIATION",
+                sourceEntityUuid = rec.uuid,
+                facilityId = godownId,
+                cropType = cropType,
+                quantityKg = -lostKg,
+                costPerQuintalPaise = (baseCostPerQuintal * 100).toLong(),
+                totalValuePaise = (totalLossCapitalized * 100).toLong(),
+                reason = "Moisture Shrinkage loss reconciled in $godownId"
+            )
+        }
+
+        // Update Godown
         val godown = godownDao.getGodownById(godownId)
         if (godown != null) {
             val updated = godown.copy(
@@ -376,7 +482,7 @@ class GrainRepository(private val db: AppDatabase) {
         recId
     }
 
-    // 7. Outbound Dispatch & FIFO Stock Depletion
+    // 7. Outbound Dispatch via Use Case
     suspend fun createOutboundDispatch(
         buyerName: String,
         destination: String,
@@ -386,48 +492,30 @@ class GrainRepository(private val db: AppDatabase) {
         tareWeightKg: Double,
         grossWeightKg: Double,
         ratePerQuintal: Double,
+        buyerPartyId: Long? = null,
         onComplete: (Long) -> Unit = {}
     ): Long = withContext(Dispatchers.IO) {
-        val netKg = (grossWeightKg - tareWeightKg).coerceAtLeast(0.0)
-        val invoiceAmt = (netKg / 100.0) * ratePerQuintal
-        
-        // FIFO Cost calculation from source Godown adjusted average cost
-        val godown = godownDao.findGodown(godownSource)
-            ?: godownDao.getGodownById(godownSource)
-            ?: godownDao.getFirstGodown()
-        val fifoUnitCost = godown?.adjustedAvgCostPerQuintal ?: (ratePerQuintal * 0.94)
-        val fifoCost = (netKg / 100.0) * fifoUnitCost
-
-        val dispatch = OutboundDispatchEntity(
-            dispatchNo = "DSP-${Random.nextInt(1000, 9999)}",
-            buyerName = buyerName.trim(),
-            destination = destination.trim(),
-            vehicleNumber = vehicleNumber.trim().uppercase(),
-            cropType = cropType,
+        val crop = CropType.entries.find { it.name == cropType } ?: CropType.MAIZE
+        val request = CreateDispatchRequest(
+            buyerPartyId = buyerPartyId,
+            buyerNameQuick = buyerName,
+            destination = destination,
+            vehicleNumber = vehicleNumber,
+            cropType = crop,
             godownSource = godownSource,
             tareWeightKg = tareWeightKg,
             grossWeightKg = grossWeightKg,
-            netLoadedWeightKg = netKg,
-            ratePerQuintal = ratePerQuintal,
-            totalInvoiceAmount = invoiceAmt,
-            fifoProcurementCost = fifoCost,
-            status = DispatchStatus.IN_TRANSIT.name,
-            timestamp = System.currentTimeMillis()
+            ratePerQuintal = ratePerQuintal
         )
-        val id = dispatchDao.insertDispatch(dispatch)
-
-        // Deduct from Godown Stock immediately in real time
-        if (godown != null) {
-            val newStock = (godown.currentStockMt - (netKg / 1000.0)).coerceAtLeast(0.0)
-            godownDao.updateGodown(godown.copy(currentStockMt = newStock, lastUpdated = System.currentTimeMillis()))
-        }
-        onComplete(id)
-        id
+        val result = createDispatchUseCase(request)
+        val saved = result.getOrThrow()
+        onComplete(saved.id)
+        saved.id
     }
 
     suspend fun getDispatchById(id: Long): OutboundDispatchEntity? = dispatchDao.getDispatchById(id)
 
-    // 8. Settle Unloaded Dispatch & Calculate Actual Net Profit
+    // 8. Settle Unloaded Dispatch
     suspend fun settleUnloadedDispatch(
         dispatchId: Long,
         companyUnloadedWeightKg: Double,
@@ -470,6 +558,7 @@ class GrainRepository(private val db: AppDatabase) {
         if (freightCost > 0) {
             vendorLedgerDao.insertLedgerEntry(
                 VendorLedgerEntity(
+                    partyId = dispatch.transporterPartyId,
                     vendorType = "TRANSPORTER",
                     vendorName = "Truck ${dispatch.vehicleNumber}",
                     transactionType = "BILL_CREDIT",
@@ -508,7 +597,7 @@ class GrainRepository(private val db: AppDatabase) {
         }
     }
 
-    // 9. Truck Rejection & 50% Extra Labor Rule
+    // 9. Truck Rejection & 50% Labor Rule with Document Sequencing
     suspend fun recordTruckRejection(
         truckNumber: String,
         buyerOrCompany: String,
@@ -523,12 +612,17 @@ class GrainRepository(private val db: AppDatabase) {
         salvageRealizedRatePerQtl: Double = 0.0,
         notes: String = ""
     ): Long = withContext(Dispatchers.IO) {
-        // Strict Rule: Return bag shifting labor is calculated at exactly 50% of original loading labor
         val returnBagShiftingLabor = originalLoadingLaborCost * 0.50
         val totalLoss = transportLoss + penaltiesDemurrage + qualitySalvageDeduction + returnBagShiftingLabor
 
+        val rejectionNo = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = "MAIN",
+            documentType = DocumentType.REJ
+        )
+
         val rejection = TruckRejectionEntity(
-            rejectionNo = "REJ-${Random.nextInt(1000, 9999)}",
+            rejectionNo = rejectionNo,
             truckNumber = truckNumber.trim().uppercase(),
             buyerOrCompany = buyerOrCompany.trim(),
             cropType = cropType.name,
@@ -537,7 +631,7 @@ class GrainRepository(private val db: AppDatabase) {
             transportLoss = transportLoss,
             penaltiesDemurrage = penaltiesDemurrage,
             originalLoadingLaborCost = originalLoadingLaborCost,
-            returnBagShiftingLaborCost = returnBagShiftingLabor, // 50% extra labor
+            returnBagShiftingLaborCost = returnBagShiftingLabor,
             qualitySalvageDeduction = qualitySalvageDeduction,
             totalRejectionLoss = totalLoss,
             salvageAction = salvageAction.trim(),
@@ -546,35 +640,47 @@ class GrainRepository(private val db: AppDatabase) {
         )
         val id = truckRejectionDao.insertRejection(rejection)
 
-        // Add the grain weight back into the selected Silo
-        val godown = godownDao.getFirstGodown() // Or find by truck
-        // Actually, we can just find the dispatch
+        // Find dispatch to restore stock
         val dispatch = dispatchDao.getDispatchByTruck(truckNumber)
-        val godownSource = dispatch?.godownSource
-        if (godownSource != null) {
-            val godownFound = godownDao.findGodown(godownSource) ?: godownDao.getGodownById(godownSource)
-            if (godownFound != null) {
-                val newStock = godownFound.currentStockMt + (dispatchedWeightKg / 1000.0)
-                godownDao.updateGodown(godownFound.copy(currentStockMt = newStock, lastUpdated = System.currentTimeMillis()))
-            }
+        val godownSource = dispatch?.godownSource ?: "GODOWN_A"
+        godownDao.addStock(godownSource, dispatchedWeightKg / 1000.0)
+
+        // Post Inventory Return Movement
+        postMovement(
+            movementType = com.example.data.model.InventoryMovementType.RECEIPT,
+            sourceEntityType = "REJECTION",
+            sourceEntityUuid = rejection.uuid,
+            facilityId = godownSource,
+            cropType = cropType.name,
+            quantityKg = dispatchedWeightKg,
+            reason = "Restored stock from rejected truck $truckNumber"
+        )
+
+        if (dispatch != null) {
             dispatchDao.updateDispatch(dispatch.copy(status = com.example.data.model.DispatchStatus.REJECTED.name))
         }
 
-        // Log rejection loss in ledger
+        // Ledger Entry
         vendorLedgerDao.insertLedgerEntry(
             VendorLedgerEntity(
                 vendorType = "TRANSPORTER",
                 vendorName = "Truck $truckNumber Rejection Claim",
                 transactionType = "PENALTY_DEDUCTION",
-                amount = -totalLoss, // Negative expense
+                amount = -totalLoss,
                 paymentMode = "CASH",
                 referenceDocNo = rejection.rejectionNo,
                 notes = "Rejection Loss: Transport ₹$transportLoss + 50% Shifting Labor ₹$returnBagShiftingLabor + Penalties ₹$penaltiesDemurrage"
             )
         )
-        
+
+        val expNo = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = "MAIN",
+            documentType = DocumentType.EXP
+        )
+
         val expense = ExpenseEntryEntity(
-            expenseNo = "EXP-${kotlin.random.Random.nextInt(1000, 9999)}",
+            expenseNo = expNo,
             truckOrBatchRef = truckNumber,
             cropType = cropType.name,
             laborCost = returnBagShiftingLabor,
@@ -604,10 +710,18 @@ class GrainRepository(private val db: AppDatabase) {
         paidToOrParty: String,
         paymentMode: String = "CASH",
         utrOrChequeNo: String = "",
-        notes: String = ""
+        notes: String = "",
+        partyId: Long? = null
     ): Long = withContext(Dispatchers.IO) {
+        val expNo = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = "MAIN",
+            documentType = DocumentType.EXP
+        )
+
         val expense = ExpenseEntryEntity(
-            expenseNo = "EXP-${Random.nextInt(1000, 9999)}",
+            expenseNo = expNo,
+            partyId = partyId,
             truckOrBatchRef = truckOrBatchRef.trim(),
             cropType = cropType.name,
             laborCost = laborCost,
@@ -623,9 +737,9 @@ class GrainRepository(private val db: AppDatabase) {
         )
         val id = expenseDao.insertExpense(expense)
 
-        // Add to Vendor Ledger
         vendorLedgerDao.insertLedgerEntry(
             VendorLedgerEntity(
+                partyId = partyId,
                 vendorType = if (laborCost > 0) "LABOR" else "TRANSPORTER",
                 vendorName = paidToOrParty.trim().ifEmpty { "Cash Party" },
                 transactionType = "PAYMENT_DEBIT",
@@ -639,37 +753,7 @@ class GrainRepository(private val db: AppDatabase) {
         id
     }
 
-    // 11. Automated PDC Background Check & Clearing
-    suspend fun checkAndClearMaturedPdcs(): List<VendorLedgerEntity> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val matured = vendorLedgerDao.getMaturedPdcs(now)
-        for (pdc in matured) {
-            val cleared = pdc.copy(
-                pdcStatus = PdcStatus.CLEARED.name,
-                runningBalance = 0.0,
-                notes = "${pdc.notes} • AUTO-CLEARED on maturity"
-            )
-            vendorLedgerDao.updateLedgerEntry(cleared)
-        }
-        matured
-    }
-
-    // Simulated IoT pulse generator
-    suspend fun emitSimulatedIoTPulse() = withContext(Dispatchers.IO) {
-        val currentKg = Random.nextInt(7800, 32000).toDouble()
-        telemetryDao.insertTelemetry(
-            IoTTelemetryEntity(
-                deviceType = "WEIGHBRIDGE",
-                deviceId = "WB-DIGI-01",
-                readingValue = currentKg,
-                unit = "kg",
-                status = "LIVE_STREAM",
-                rawPayloadJson = "{\"gross_kg\":$currentKg,\"stability\":\"OK\"}",
-                latencyMs = 1
-            )
-        )
-    }
-
+    // 11. Trade Booking with Document Sequencing
     suspend fun bookTrade(
         cropType: CropType,
         brokerOrBuyerName: String,
@@ -680,10 +764,18 @@ class GrainRepository(private val db: AppDatabase) {
         bagCostPerQuintal: Double,
         transportPerQuintal: Double,
         brokeragePerQuintal: Double,
-        notes: String = ""
+        notes: String = "",
+        buyerPartyId: Long? = null
     ): Long = withContext(Dispatchers.IO) {
+        val tradeNo = generateDocNumber(
+            financialYear = "26-27",
+            facilityId = "MAIN",
+            documentType = DocumentType.TRD
+        )
+
         val trade = TradeBookingEntity(
-            tradeNo = "TRD-${Random.nextInt(1000, 9999)}",
+            tradeNo = tradeNo,
+            buyerPartyId = buyerPartyId,
             cropType = cropType.name,
             brokerOrBuyerName = brokerOrBuyerName.trim(),
             quantityTons = quantityTons,
@@ -705,26 +797,42 @@ class GrainRepository(private val db: AppDatabase) {
         tradeDao.updateTrade(trade.copy(tradeStatus = newStatus))
     }
 
-    suspend fun deleteTrade(tradeId: Long) = withContext(Dispatchers.IO) {
-        tradeDao.deleteTradeById(tradeId)
+    suspend fun deleteTrade(tradeId: Long, reason: String = "Deleted trade") = withContext(Dispatchers.IO) {
+        val trade = tradeDao.getTradeById(tradeId)
+        if (trade != null) {
+            auditTrailRepository.logDelete(
+                entityType = "TRADE_BOOKING",
+                entityId = trade.tradeNo,
+                previousStateJson = "{\"tradeNo\":\"${trade.tradeNo}\",\"tons\":${trade.quantityTons}}",
+                reason = reason
+            )
+            tradeDao.deleteTradeById(tradeId)
+        }
     }
 
-    suspend fun deleteExpense(expense: ExpenseEntryEntity) = withContext(Dispatchers.IO) {
-        expenseDao.deleteExpense(expense.id)
+    suspend fun deleteExpenseById(expenseId: Long, reason: String = "Deleted expense") = withContext(Dispatchers.IO) {
+        val exp = expenseDao.getExpenseById(expenseId)
+        if (exp != null) {
+            auditTrailRepository.logDelete(
+                entityType = "MANUAL_EXPENSE",
+                entityId = exp.expenseNo,
+                previousStateJson = "{\"expenseNo\":\"${exp.expenseNo}\",\"total\":${exp.totalExpense}}",
+                reason = reason
+            )
+            expenseDao.deleteExpense(expenseId)
+        }
     }
 
-    suspend fun deleteExpenseById(expenseId: Long) = withContext(Dispatchers.IO) {
-        expenseDao.deleteExpense(expenseId)
-    }
-
-    suspend fun deleteTruckRejection(rejectionId: Long) = withContext(Dispatchers.IO) {
-        truckRejectionDao.deleteRejection(rejectionId)
-    }
-
-    suspend fun setupDynamicGodowns(godowns: List<GodownEntity>) = withContext(Dispatchers.IO) {
-        if (godowns.isNotEmpty()) {
-            godownDao.deleteAllGodowns()
-            godownDao.insertGodowns(godowns)
+    suspend fun deleteTruckRejection(rejectionId: Long, reason: String = "Deleted rejection") = withContext(Dispatchers.IO) {
+        val rej = truckRejectionDao.getRejectionById(rejectionId)
+        if (rej != null) {
+            auditTrailRepository.logDelete(
+                entityType = "TRUCK_REJECTION",
+                entityId = rej.rejectionNo,
+                previousStateJson = "{\"rejectionNo\":\"${rej.rejectionNo}\",\"loss\":${rej.totalRejectionLoss}}",
+                reason = reason
+            )
+            truckRejectionDao.deleteRejection(rejectionId)
         }
     }
 
@@ -737,12 +845,30 @@ class GrainRepository(private val db: AppDatabase) {
         procurementDao.updateArchiveStatus(procurementId, isArchived)
     }
 
-    suspend fun deleteProcurement(procurementId: Long) = withContext(Dispatchers.IO) {
-        procurementDao.deleteProcurement(procurementId)
+    suspend fun deleteProcurement(procurementId: Long, reason: String = "Deleted procurement") = withContext(Dispatchers.IO) {
+        val item = procurementDao.getProcurementById(procurementId)
+        if (item != null) {
+            auditTrailRepository.logDelete(
+                entityType = "PROCUREMENT",
+                entityId = item.tokenNo,
+                previousStateJson = "{\"token\":\"${item.tokenNo}\",\"farmer\":\"${item.farmerName}\"}",
+                reason = reason
+            )
+            procurementDao.deleteProcurement(procurementId)
+        }
     }
 
-    suspend fun deleteDispatch(dispatchId: Long) = withContext(Dispatchers.IO) {
-        dispatchDao.deleteDispatch(dispatchId)
+    suspend fun deleteDispatch(dispatchId: Long, reason: String = "Deleted dispatch") = withContext(Dispatchers.IO) {
+        val item = dispatchDao.getDispatchById(dispatchId)
+        if (item != null) {
+            auditTrailRepository.logDelete(
+                entityType = "DISPATCH",
+                entityId = item.dispatchNo,
+                previousStateJson = "{\"dispatchNo\":\"${item.dispatchNo}\",\"buyer\":\"${item.buyerName}\"}",
+                reason = reason
+            )
+            dispatchDao.deleteDispatch(dispatchId)
+        }
     }
 
     suspend fun updateProcurement(procurement: ProcurementEntity) = withContext(Dispatchers.IO) {
@@ -814,10 +940,8 @@ class GrainRepository(private val db: AppDatabase) {
             notes = "Stored into $facilityName • Moisture: $incomingMoisture% • Net: ${netKg.toInt()} kg"
         )
 
-        // Insert into storage_facility_intakes table
         storageIntakeDao.insertIntake(intakeEntity)
 
-        // Update target Godown Entity (Stock, Dynamic Weighted Avg Moisture, Active Crop, Last Updated)
         if (godown != null) {
             val prevStockMt = godown.currentStockMt
             val newStockMt = (prevStockMt + incomingMt).coerceAtMost(godown.capacityMt)
@@ -840,10 +964,83 @@ class GrainRepository(private val db: AppDatabase) {
         intakeEntity
     }
 
-    suspend fun deleteStorageIntake(id: Long) = withContext(Dispatchers.IO) {
-        storageIntakeDao.deleteIntake(id)
-    }
-
     fun getIntakesForFacility(facilityId: String): Flow<List<StorageFacilityIntakeEntity>> =
         storageIntakeDao.getIntakesForFacility(facilityId)
+
+    suspend fun insertProcurement(procurement: ProcurementEntity): Long = withContext(Dispatchers.IO) {
+        procurementDao.insertProcurement(procurement)
+    }
+
+    suspend fun deleteStorageIntake(id: Long) = withContext(Dispatchers.IO) {
+        val intake = storageIntakeDao.getIntakeById(id)
+        if (intake != null) {
+            auditTrailRepository.logDelete(
+                entityType = "STORAGE_INTAKE",
+                entityId = intake.tokenNo,
+                previousStateJson = "{\"token\":\"${intake.tokenNo}\",\"facility\":\"${intake.storageFacilityName}\"}",
+                reason = "Deleted storage facility intake"
+            )
+            storageIntakeDao.deleteIntake(id)
+        }
+    }
+
+    suspend fun deleteStorageIntake(intake: StorageFacilityIntakeEntity) = deleteStorageIntake(intake.id)
+
+    suspend fun emitSimulatedIoTPulse() = withContext(Dispatchers.IO) {
+        val godowns = godownDao.getAllGodownsDirect()
+        val randomGodown = godowns.randomOrNull() ?: return@withContext
+        val moist = (randomGodown.averageMoisture + (Math.random() * 0.8 - 0.4)).coerceIn(10.0, 18.0)
+        val telemetry = IoTTelemetryEntity(
+            deviceType = "SILO_SENSOR",
+            deviceId = "IOT-${randomGodown.godownId}",
+            readingValue = Math.round(moist * 10.0) / 10.0,
+            unit = "%",
+            status = if (moist > 14.0) "ACTIVE_AERATION" else "OPTIMAL",
+            rawPayloadJson = "{\"facility\":\"${randomGodown.displayName}\",\"moisture\":$moist}",
+            timestamp = System.currentTimeMillis()
+        )
+        telemetryDao.insertTelemetry(telemetry)
+    }
+
+    suspend fun endOfSeasonZeroOut(godownId: String) = withContext(Dispatchers.IO) {
+        val godown = godownDao.getGodownById(godownId) ?: return@withContext
+        auditTrailRepository.logAction(
+            entityType = "GODOWN_STOCK",
+            entityId = godownId,
+            action = com.example.data.model.AuditAction.LOCK.name,
+            reason = "End of Season Audit Zero-Out for $godownId",
+            previousStateJson = "{\"currentStockMt\":${godown.currentStockMt}}"
+        )
+        godownDao.updateGodown(godown.copy(currentStockMt = 0.0, lastUpdated = System.currentTimeMillis()))
+    }
+
+    suspend fun receiveCorporatePayment(amount: Double, source: String, notes: String) = withContext(Dispatchers.IO) {
+        val entry = VendorLedgerEntity(
+            vendorType = "CORPORATE_BUYER",
+            vendorName = source,
+            transactionType = "PAYMENT_RECEIVED",
+            amount = amount,
+            utrOrChequeNo = "BANK-REC-${System.currentTimeMillis() % 100000}",
+            referenceDocNo = "CORP-PAY",
+            notes = notes,
+            runningBalance = 0.0
+        )
+        vendorLedgerDao.insertLedgerEntry(entry)
+    }
+
+    suspend fun logInterestExpense(amount: Double, notes: String) = withContext(Dispatchers.IO) {
+        val entry = ExpenseEntryEntity(
+            expenseNo = "INT-${System.currentTimeMillis() % 100000}",
+            truckOrBatchRef = "BANK-INTEREST",
+            cropType = "ALL",
+            laborCost = 0.0,
+            bagsCost = 0.0,
+            transportCost = 0.0,
+            miscCost = amount,
+            miscDescription = "Bank Interest / CC Charges",
+            paidToOrParty = "Bank CC / OD Interest",
+            notes = notes
+        )
+        expenseDao.insertExpense(entry)
+    }
 }

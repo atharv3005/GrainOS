@@ -1,7 +1,11 @@
 package com.example.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.domain.managers.OrganizationContext
+import java.util.UUID
 
 enum class ProcurementStatus {
     REGISTERED,
@@ -21,7 +25,8 @@ enum class QualityGrade(val label: String, val rateFactor: Double, val maxMoistu
 enum class PaymentStatus {
     PAID,
     PENDING,
-    PROCESSING
+    PROCESSING,
+    UNPAID
 }
 
 enum class PaymentMode(val label: String) {
@@ -30,10 +35,40 @@ enum class PaymentMode(val label: String) {
     CHEQUE("Cheque / PDC (धनादेश)")
 }
 
-@Entity(tableName = "procurements")
+@Entity(
+    tableName = "procurements",
+    indices = [
+        Index(value = ["uuid"], unique = true),
+        Index(value = ["tokenNo"], unique = true),
+        Index(value = ["party_id"]),
+        Index(value = ["createdAt"]),
+        Index(value = ["status"]),
+        Index(value = ["paymentStatus"]),
+        Index(value = ["org_code", "createdAt"])
+    ]
+)
 data class ProcurementEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+
+    @ColumnInfo(name = "uuid")
+    val uuid: String = UUID.randomUUID().toString(),
+
+    @ColumnInfo(name = "org_code")
+    val orgCode: String = OrganizationContext.getCurrentOrgCode(),
+
+    @ColumnInfo(name = "party_id")
+    val partyId: Long? = null,
+
+    @ColumnInfo(name = "farmer_name_quick")
+    val farmerNameQuick: String? = null,
+
+    @ColumnInfo(name = "mobile_quick")
+    val mobileQuick: String? = null,
+
+    @ColumnInfo(name = "village_quick")
+    val villageQuick: String? = null,
+
     val tokenNo: String,
     val farmerName: String,
     val mobileNumber: String,
@@ -87,5 +122,29 @@ data class ProcurementEntity(
     val whatsappEntrySent: Boolean = false,
     val whatsappReceiptSent: Boolean = false,
     val isArchived: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+
+    @ColumnInfo(name = "quantity_basis")
+    val quantityBasis: String = QuantityBasis.PHYSICAL.name,
+
+    @ColumnInfo(name = "sync_status")
+    val syncStatus: String = SyncStatus.PENDING.name,
+
+    @ColumnInfo(name = "synced_at")
+    val syncedAt: Long? = null,
+
+    @ColumnInfo(name = "idempotency_key")
+    val idempotencyKey: String = UUID.randomUUID().toString(),
+
+    @ColumnInfo(name = "device_id")
+    val deviceId: String = "local_device",
+
+    @ColumnInfo(name = "organization_id")
+    val organizationId: String = "default",
+
+    @ColumnInfo(name = "schema_version")
+    val schemaVersion: Int = 1,
+
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Long = System.currentTimeMillis()
 )

@@ -4,7 +4,7 @@
     <!-- Navigation Tabs -->
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_pnl">P&amp;L Engine</string>
-    <string name="nav_finance">Finance Tracker</string>
+    <string name="nav_finance">Finance</string>
     <string name="nav_expenses">Expenses</string>
     <string name="nav_inbound">Gate Entry</string>
     <string name="nav_dispatch">Dispatch</string>
@@ -12,6 +12,12 @@
     <string name="nav_receipts">Receipts</string>
     <string name="nav_ledger">Ledger</string>
     <string name="nav_ai_advisor">AI Advisor</string>
+    <string name="nav_parties">Parties</string>
+    <string name="nav_pdcs">PDCs</string>
+    <string name="nav_audit">Audit</string>
+    <string name="nav_eod">EOD Close</string>
+    <string name="nav_movements">Movements</string>
+    <string name="nav_allocations">Allocations</string>
 
     <!-- Language Selector -->
     <string name="lang_toggle">Language</string>

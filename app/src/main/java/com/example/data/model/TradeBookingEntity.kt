@@ -1,12 +1,40 @@
 package com.example.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.example.domain.managers.OrganizationContext
+import java.util.UUID
 
-@Entity(tableName = "trade_bookings")
+@Entity(
+    tableName = "trade_bookings",
+    indices = [
+        Index(value = ["uuid"], unique = true),
+        Index(value = ["tradeNo"], unique = true),
+        Index(value = ["buyer_party_id"]),
+        Index(value = ["broker_party_id"]),
+        Index(value = ["tradeStatus"]),
+        Index(value = ["tradeTimestamp"]),
+        Index(value = ["org_code", "tradeTimestamp"])
+    ]
+)
 data class TradeBookingEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
+
+    @ColumnInfo(name = "uuid")
+    val uuid: String = UUID.randomUUID().toString(),
+
+    @ColumnInfo(name = "org_code")
+    val orgCode: String = OrganizationContext.getCurrentOrgCode(),
+
+    @ColumnInfo(name = "buyer_party_id")
+    val buyerPartyId: Long? = null,
+
+    @ColumnInfo(name = "broker_party_id")
+    val brokerPartyId: Long? = null,
+
     val tradeNo: String,
     val cropType: String,
     val brokerOrBuyerName: String,
@@ -22,7 +50,28 @@ data class TradeBookingEntity(
     val notes: String = "",
     val finalCompanyUnloadedWeightKg: Double = 0.0,
     val gateWeightKg: Double = 0.0,
-    val actualLoggedExpenses: Double = 0.0
+    val actualLoggedExpenses: Double = 0.0,
+
+    @ColumnInfo(name = "sync_status")
+    val syncStatus: String = SyncStatus.PENDING.name,
+
+    @ColumnInfo(name = "synced_at")
+    val syncedAt: Long? = null,
+
+    @ColumnInfo(name = "idempotency_key")
+    val idempotencyKey: String = UUID.randomUUID().toString(),
+
+    @ColumnInfo(name = "device_id")
+    val deviceId: String = "local_device",
+
+    @ColumnInfo(name = "organization_id")
+    val organizationId: String = "default",
+
+    @ColumnInfo(name = "schema_version")
+    val schemaVersion: Int = 1,
+
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Long = System.currentTimeMillis()
 ) {
     // 1 Metric Ton = 10 Quintals
     val totalQuintals: Double get() = quantityTons * 10.0
